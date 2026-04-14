@@ -1,0 +1,30 @@
+# Environment — never commit secrets
+.env
+
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+nohup.out
+
+# Runtime job store and reports
+jobs/
+reports/
+
+# Claude IDE config
+.claude/
+
+# CLAUDE.md (IDE context, not part of project)
+CLAUDE.md

@@ -1,0 +1,1762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Research Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <style>
+    :root {
+      --bg:        #0b0b14;
+      --surface:   #111120;
+      --surface-2: #17172a;
+      --surface-3: #1e1e33;
+      --border:    #242438;
+      --border-2:  #2e2e4a;
+      --text:      #e4e4f0;
+      --muted:     #6a6a90;
+      --subtle:    #3a3a58;
+      --accent:    #6366f1;
+      --accent-2:  #8b5cf6;
+      --accent-glow: rgba(99,102,241,.18);
+      --researcher:#3b82f6;
+      --analyst:   #f97316;
+      --synth:     #10b981;
+      --sys:       #8b5cf6;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+    /* ── Prose (dark) ── */
+    .prose { color: #c8c8e0; line-height: 1.7; }
+    .prose h1 { font-size:1.4rem; font-weight:700; margin:1.2rem 0 .6rem; color:#f0f0fa; }
+    .prose h2 { font-size:1.1rem; font-weight:700; margin:1.1rem 0 .4rem; border-bottom:1px solid var(--border-2); padding-bottom:.3rem; color:#f0f0fa; }
+    .prose h3 { font-size:.95rem; font-weight:600; margin:.9rem 0 .3rem; color:#e0e0f0; }
+    .prose p  { margin-bottom:.7rem; }
+    .prose ul { list-style:disc; padding-left:1.4rem; margin-bottom:.7rem; }
+    .prose ol { list-style:decimal; padding-left:1.4rem; margin-bottom:.7rem; }
+    .prose li { margin-bottom:.25rem; }
+    .prose a  { color:#818cf8; text-decoration:underline; word-break:break-all; }
+    .prose a:hover { color:#a5b4fc; }
+    .prose strong { font-weight:700; color:#e0e0f4; }
+    .prose code { background:var(--surface-3); color:#c084fc; padding:.1em .35em; border-radius:.25rem; font-size:.82em; font-family:'JetBrains Mono', monospace; }
+    .prose blockquote { border-left:3px solid var(--border-2); padding-left:1rem; color:var(--muted); margin:.7rem 0; font-style:italic; }
+    .prose hr { border:none; border-top:1px solid var(--border); margin:1rem 0; }
+
+    /* ── Citations ── */
+    sup.cite-ref {
+      color: #818cf8;
+      font-size: .65em;
+      font-weight: 700;
+      cursor: pointer;
+      vertical-align: super;
+      line-height: 1;
+      padding: 0 1px;
+    }
+    sup.cite-ref:hover { color: #a5b4fc; text-decoration: underline; }
+    .cite-tooltip {
+      position: fixed;
+      background: #1a1a2e;
+      border: 1px solid var(--border-2);
+      color: #e0e0f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      max-width: 380px;
+      font-size: 12px;
+      line-height: 1.5;
+      box-shadow: 0 8px 30px rgba(0,0,0,.45);
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity .15s, transform .15s;
+    }
+    .cite-tooltip.visible { opacity: 1; transform: translateY(0); pointer-events: all; }
+    .cite-tooltip-n { font-size: 10px; color: #818cf8; font-weight: 700; margin-bottom: 3px; }
+    .cite-tooltip a { color: #a5b4fc; font-weight: 600; display: block; word-break: break-all; }
+    .cite-tooltip-cat {
+      display: inline-block; margin-top: 4px;
+      font-size: 10px; background: rgba(99,102,241,.18); color: #818cf8;
+      padding: 1px 6px; border-radius: 8px; font-weight: 600;
+    }
+    .cite-ref-cat {
+      margin-left: 5px; font-size: .68rem;
+      background: rgba(99,102,241,.18); color: #818cf8;
+      padding: 1px 6px; border-radius: 8px; font-weight: 600; vertical-align: middle;
+    }
+
+    /* ── Animations ── */
+    @keyframes fadeIn   { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse-dot{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.5; transform:scale(.85); } }
+    @keyframes shimmer  { from{background-position:200% center} to{background-position:-200% center} }
+    @keyframes glow-in  { from{ box-shadow:0 0 0 0 var(--accent-glow); } to{ box-shadow:0 0 16px 4px var(--accent-glow); } }
+
+    .stream-entry { animation: fadeIn .2s ease; }
+    .agent-active { animation: pulse-dot 2s ease-in-out infinite; }
+
+    /* ── Agent chips ── */
+    .chip-researcher { background:rgba(59,130,246,.15); color:#93c5fd; border:1px solid rgba(59,130,246,.3); }
+    .chip-analyst    { background:rgba(249,115,22,.15);  color:#fdba74; border:1px solid rgba(249,115,22,.3); }
+    .chip-synth      { background:rgba(16,185,129,.15);  color:#6ee7b7; border:1px solid rgba(16,185,129,.3); }
+    .chip-system     { background:rgba(139,92,246,.15);  color:#c4b5fd; border:1px solid rgba(139,92,246,.3); }
+
+    /* ── Stream event accents ── */
+    .ev-search  { border-left:2px solid rgba(99,102,241,.7); }
+    .ev-fetch   { border-left:2px solid rgba(14,165,233,.7); }
+    .ev-content { border-left:2px solid rgba(14,165,233,.4); background:rgba(14,165,233,.04); }
+    .ev-step    { border-left:2px solid rgba(255,255,255,.08); }
+    .ev-plan    { border-left:2px solid rgba(245,158,11,.6); }
+    .ev-note    { border-left:2px solid rgba(16,185,129,.6); }
+    .ev-draft   { border-left:2px solid rgba(139,92,246,.6); }
+    .ev-switch  { border-left:2px solid rgba(236,72,153,.7); background:rgba(236,72,153,.05); }
+    .ev-done    { border-left:2px solid rgba(16,185,129,.8); background:rgba(16,185,129,.07); }
+    .ev-error   { border-left:2px solid rgba(239,68,68,.7);  background:rgba(239,68,68,.07); }
+
+    /* ── Workspace tabs ── */
+    .tab-btn { position:relative; transition:all .15s; color:var(--muted); }
+    .tab-btn:hover { color:var(--text); }
+    .tab-btn.active { color:#e0e0f4; }
+    .tab-btn.active::after {
+      content:''; position:absolute; bottom:0; left:12px; right:12px;
+      height:2px; background:var(--accent); border-radius:99px;
+    }
+    .tab-pane { display:none; }
+    .tab-pane.active { display:block; }
+
+    /* ── Artifact tabs ── */
+    .art-tab-btn { transition:all .15s; color:var(--muted); font-size:.7rem; }
+    .art-tab-btn:hover { color:var(--text); }
+    .art-tab-btn.active { color:#e0e0f4; background:var(--surface-3); }
+    .art-tab-pane { display:none; }
+    .art-tab-pane.active { display:block; }
+
+    /* ── Source badges ── */
+    .badge-found     { background:rgba(99,102,241,.15);  color:#a5b4fc; }
+    .badge-confirmed { background:rgba(16,185,129,.15);  color:#6ee7b7; }
+    .badge-academic  { background:rgba(139,92,246,.15);  color:#c4b5fd; }
+    .badge-gov       { background:rgba(16,185,129,.12);  color:#86efac; }
+    .badge-news      { background:rgba(245,158,11,.12);  color:#fcd34d; }
+    .badge-social    { background:rgba(239,68,68,.12);   color:#fca5a5; }
+
+    /* ── Stage pipeline ── */
+    .stage-done    { background:rgba(16,185,129,.1);  border-color:rgba(16,185,129,.4);  color:#34d399; }
+    .stage-active  { background:rgba(99,102,241,.12); border-color:rgba(99,102,241,.6);  color:#a5b4fc;
+                     box-shadow:0 0 12px rgba(99,102,241,.2); }
+    .stage-pending { background:rgba(255,255,255,.02); border-color:var(--border); color:var(--subtle); }
+
+    /* ── Severity / evaluation ── */
+    .sev-critical { border-left:3px solid rgba(239,68,68,.8);  background:rgba(239,68,68,.07);  }
+    .sev-warning  { border-left:3px solid rgba(245,158,11,.8); background:rgba(245,158,11,.06); }
+    .sev-info     { border-left:3px solid rgba(99,102,241,.7); background:rgba(99,102,241,.06); }
+    .sev-good     { border-left:3px solid rgba(16,185,129,.7); background:rgba(16,185,129,.06); }
+
+    /* ── Grade badges ── */
+    .grade-A { background:rgba(16,185,129,.2);  color:#34d399; }
+    .grade-B { background:rgba(99,102,241,.2);  color:#a5b4fc; }
+    .grade-C { background:rgba(245,158,11,.18); color:#fcd34d; }
+    .grade-D { background:rgba(249,115,22,.18); color:#fdba74; }
+    .grade-F { background:rgba(239,68,68,.18);  color:#fca5a5; }
+
+    /* ── Stats strip ── */
+    .stat-cell { padding:.7rem .6rem; border-right:1px solid var(--border); }
+    .stat-cell:last-child { border-right:none; }
+
+    /* ── Surface card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .card-elevated {
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: 12px;
+    }
+
+    /* ── Gradient brand ── */
+    .brand-gradient {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    }
+    .text-gradient {
+      background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Input fields ── */
+    .field {
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: 8px;
+      color: var(--text);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field:focus {
+      outline: none;
+      border-color: rgba(99,102,241,.6);
+      box-shadow: 0 0 0 3px rgba(99,102,241,.12);
+    }
+    .field::placeholder { color: var(--subtle); }
+
+    /* ── Buttons ── */
+    .btn-primary {
+      background: linear-gradient(135deg, #5b5fef 0%, #7c3aed 100%);
+      color: white;
+      font-weight: 600;
+      border-radius: 8px;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn-primary:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border-radius: 8px;
+      transition: background .15s, color .15s;
+    }
+    .btn-ghost:hover { background: var(--surface-3); color: var(--text); }
+
+    .btn-danger {
+      background: rgba(239,68,68,.1);
+      color: #f87171;
+      border: 1px solid rgba(239,68,68,.3);
+      border-radius: 8px;
+      transition: background .15s;
+    }
+    .btn-danger:hover { background: rgba(239,68,68,.18); }
+
+    /* ── Status pill ── */
+    .status-online  { background:rgba(16,185,129,.15); color:#34d399; }
+    .status-offline { background:rgba(239,68,68,.15);  color:#f87171; }
+    .status-checking{ background:rgba(255,255,255,.05); color:var(--muted); }
+
+    /* ── Report list items ── */
+    .report-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: border-color .15s, background .15s;
+    }
+    .report-item:hover { border-color: var(--border-2); background: var(--surface-3); }
+    .report-item.active { border-color: rgba(99,102,241,.5); background: rgba(99,102,241,.07); }
+
+    /* ── Scrollable panels ── */
+    .panel-scroll { min-height: 280px; max-height: 420px; overflow-y: auto; }
+    .stream-scroll { max-height: 580px; overflow-y: auto; }
+  </style>
+</head>
+
+<body class="min-h-screen flex flex-col" style="background:var(--bg)">
+
+<!-- ══════════════════════════════ HEADER ════════════════════════════════════ -->
+<header class="sticky top-0 z-20 border-b" style="background:rgba(11,11,20,.92);backdrop-filter:blur(16px);border-color:var(--border)">
+  <div class="max-w-screen-2xl mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
+
+    <!-- Logo -->
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg brand-gradient flex items-center justify-center text-white text-sm font-bold shadow-lg" style="box-shadow:0 0 16px rgba(99,102,241,.4)">R</div>
+      <div>
+        <h1 class="text-sm font-semibold leading-none" style="color:var(--text)">Research Agent</h1>
+        <p class="text-xs mt-0.5" style="color:var(--muted)">CrewAI · LM Studio · Live Workspace</p>
+      </div>
+    </div>
+
+    <!-- Right controls -->
+    <div class="flex items-center gap-2.5">
+      <span id="active-agent-badge" class="hidden text-xs px-2.5 py-1 rounded-full font-medium agent-active chip-researcher"></span>
+      <button id="settings-btn" class="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5" style="border:1px solid var(--border)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        Settings
+      </button>
+      <span id="server-status" class="text-xs px-2.5 py-1 rounded-full status-checking">Checking…</span>
+    </div>
+  </div>
+</header>
+
+<!-- ════════════════════════════ QUERY BAR ═══════════════════════════════════ -->
+<div class="border-b px-6 py-4" style="background:var(--surface);border-color:var(--border)">
+  <div class="max-w-screen-2xl mx-auto flex gap-3 items-end">
+    <div class="flex-1 relative">
+      <textarea
+        id="query-input" rows="2"
+        placeholder="Ask a research question… (Ctrl+Enter to start)"
+        class="field w-full px-4 py-3 text-sm resize-none leading-relaxed"
+        style="font-family:'Inter',sans-serif"
+      ></textarea>
+      <span id="form-error" class="hidden absolute -bottom-5 left-0 text-xs" style="color:#f87171"></span>
+    </div>
+    <div class="flex flex-col gap-1.5 shrink-0 pb-0.5">
+      <button id="start-btn" class="btn-primary px-6 py-2.5 text-sm whitespace-nowrap">
+        Start Research
+      </button>
+      <button id="cancel-btn" class="btn-danger hidden px-6 py-2 text-sm text-center whitespace-nowrap">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════ STAGE PIPELINE ════════════════════════════════ -->
+<div id="pipeline-bar" class="hidden border-b px-6 py-3" style="background:rgba(17,17,32,.6);border-color:var(--border)">
+  <div class="max-w-screen-2xl mx-auto flex items-center gap-2">
+    <div id="stage-1" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium stage-pending">
+      <span class="stage-icon">○</span><span>Research</span>
+    </div>
+    <div class="text-xs" style="color:var(--subtle)">→</div>
+    <div id="stage-2" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium stage-pending">
+      <span class="stage-icon">○</span><span>Analysis</span>
+    </div>
+    <div class="text-xs" style="color:var(--subtle)">→</div>
+    <div id="stage-3" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium stage-pending">
+      <span class="stage-icon">○</span><span>Synthesis</span>
+    </div>
+    <div id="job-elapsed" class="ml-4 text-xs tabular-nums whitespace-nowrap" style="color:var(--muted)"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════ MAIN WORKSPACE ══════════════════════════════ -->
+<div class="flex-1 max-w-screen-2xl w-full mx-auto px-6 py-5 flex gap-5 items-start min-h-0">
+
+  <!-- ── LEFT: Live Feed + Report ── -->
+  <div class="flex-1 min-w-0 flex flex-col gap-4">
+
+    <!-- Live Stream -->
+    <div id="stream-card" class="hidden card flex flex-col" style="min-height:500px">
+      <div class="flex items-center justify-between px-4 py-3 border-b" style="border-color:var(--border)">
+        <div class="flex items-center gap-2">
+          <div class="w-1.5 h-1.5 rounded-full brand-gradient" style="box-shadow:0 0 6px var(--accent)"></div>
+          <span class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Live Stream</span>
+        </div>
+        <button id="clear-stream-btn" class="btn-ghost text-xs px-2 py-1">Clear</button>
+      </div>
+      <div id="stream-panel" class="stream-scroll flex-1 p-3 space-y-1" style="font-family:'JetBrains Mono',monospace;font-size:.72rem;line-height:1.55">
+        <div class="italic py-3 text-center" style="color:var(--subtle)">Waiting for pipeline to start…</div>
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="hidden rounded-xl p-4 text-sm" style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#fca5a5"></div>
+
+    <!-- Run Artifacts -->
+    <div id="artifacts-card" class="hidden card overflow-hidden">
+      <button id="artifacts-toggle" class="w-full flex items-center justify-between px-5 py-3.5 btn-ghost transition-colors">
+        <div class="flex items-center gap-2.5">
+          <span class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Run Artifacts</span>
+          <span id="artifacts-grade-badge" class="hidden text-xs px-2 py-0.5 rounded-full font-bold"></span>
+          <span id="artifacts-score-badge" class="hidden text-xs tabular-nums" style="color:var(--muted)"></span>
+        </div>
+        <span id="artifacts-chevron" class="text-xs" style="color:var(--subtle)">▲</span>
+      </button>
+
+      <div id="artifacts-body" class="border-t" style="border-color:var(--border)">
+        <!-- Stats strip -->
+        <div id="artifacts-stats" class="grid grid-cols-4 border-b text-center" style="border-color:var(--border)"></div>
+
+        <!-- Evaluation -->
+        <div id="artifacts-eval" class="px-4 py-4 border-b space-y-2" style="border-color:var(--border)">
+          <div class="text-xs italic" style="color:var(--muted)">Loading evaluation…</div>
+        </div>
+
+        <!-- Artifact tabs -->
+        <div>
+          <div class="flex border-b overflow-x-auto" style="background:var(--surface-2);border-color:var(--border)">
+            <button class="art-tab-btn active px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="plan">📋 Plan</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="notes">📝 Notes</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="draft">✏️ Draft</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="sources">🔗 Sources</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="audit">🪵 Audit</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap" data-art="tree">🌿 Branch Map</button>
+          </div>
+          <div id="art-tab-plan"    class="art-tab-pane active p-4 prose prose-sm text-xs panel-scroll"></div>
+          <div id="art-tab-notes"   class="art-tab-pane hidden p-4 space-y-2 panel-scroll"></div>
+          <div id="art-tab-draft"   class="art-tab-pane hidden p-4 prose prose-sm text-xs panel-scroll"></div>
+          <div id="art-tab-sources" class="art-tab-pane hidden p-4 space-y-2 panel-scroll"></div>
+          <div id="art-tab-audit"   class="art-tab-pane hidden p-3 space-y-1 panel-scroll" style="font-family:'JetBrains Mono',monospace;font-size:.7rem"></div>
+          <div id="art-tab-tree"    class="art-tab-pane hidden" style="height:460px;overflow:hidden;position:relative"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report -->
+    <div id="report-card" class="hidden card p-6">
+      <div class="flex items-start justify-between mb-5">
+        <h2 class="font-semibold" style="color:var(--text)">Research Report</h2>
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="export-pdf-btn" class="hidden btn-ghost text-xs px-2.5 py-1.5 flex items-center gap-1.5" style="border:1px solid var(--border)">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export PDF
+          </button>
+          <button id="close-report-btn" class="btn-ghost text-xs px-2.5 py-1.5" style="border:1px solid var(--border)">✕ Close</button>
+        </div>
+      </div>
+      <div id="report-content" class="prose text-sm"></div>
+    </div>
+
+  </div><!-- end left -->
+
+  <!-- ── RIGHT: Active Workspace ── -->
+  <div id="workspace" class="hidden w-96 shrink-0 flex flex-col gap-4 sticky top-24">
+
+    <!-- Workspace tabs -->
+    <div class="card overflow-hidden">
+      <div class="flex border-b" style="background:var(--surface-2);border-color:var(--border)">
+        <button class="tab-btn active flex-1 text-xs font-medium px-3 py-3" data-tab="plan">Plan</button>
+        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="notes">Notes</button>
+        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="draft">Draft</button>
+        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="sources">Sources</button>
+      </div>
+      <div id="tab-plan" class="tab-pane active p-3.5 panel-scroll">
+        <div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>
+      </div>
+      <div id="tab-notes" class="tab-pane p-3.5 space-y-2 panel-scroll">
+        <div class="text-xs italic" style="color:var(--subtle)">Notes will accumulate as sources are read…</div>
+      </div>
+      <div id="tab-draft" class="tab-pane p-3.5 panel-scroll">
+        <div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here as research progresses…</div>
+      </div>
+      <div id="tab-sources" class="tab-pane p-3.5 space-y-2 panel-scroll">
+        <div class="text-xs italic" style="color:var(--subtle)">Sources will appear as they are fetched…</div>
+      </div>
+    </div>
+
+    <!-- Reports history (active) -->
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Reports</span>
+        <button id="refresh-reports-btn" class="btn-ghost text-xs px-2 py-1">↻ Refresh</button>
+      </div>
+      <div id="reports-list" class="space-y-1.5 max-h-52 overflow-y-auto">
+        <p class="text-xs py-2 text-center" style="color:var(--muted)">Loading…</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Idle sidebar ── -->
+  <div id="idle-sidebar" class="w-80 shrink-0 flex flex-col gap-4 sticky top-24">
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Recent Reports</span>
+        <button id="refresh-reports-idle-btn" class="btn-ghost text-xs px-2 py-1">↻ Refresh</button>
+      </div>
+      <div id="reports-list-idle" class="space-y-1.5" style="max-height:calc(100vh - 16rem);overflow-y:auto">
+        <p class="text-xs py-2 text-center" style="color:var(--muted)">Loading…</p>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end main -->
+
+<!-- ════════════════════════════ SETTINGS MODAL ══════════════════════════════ -->
+<div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.7);backdrop-filter:blur(8px)">
+  <div class="card-elevated w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl" style="box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-5 border-b" style="border-color:var(--border)">
+      <div>
+        <h2 class="font-semibold" style="color:var(--text)">AI Connection Settings</h2>
+        <p class="text-xs mt-0.5" style="color:var(--muted)">Configure which AI endpoint powers research</p>
+      </div>
+      <button id="settings-close-btn" class="btn-ghost w-8 h-8 flex items-center justify-center text-lg">✕</button>
+    </div>
+
+    <!-- Body -->
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-7">
+
+      <section>
+        <p class="text-xs font-semibold uppercase tracking-widest mb-4" style="color:var(--muted)">Active Connection</p>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-medium mb-1.5" style="color:var(--muted)">Endpoint URL</label>
+            <input id="settings-url" type="text" placeholder="http://localhost:1234/v1"
+              class="field w-full px-3 py-2.5 text-sm" style="font-family:'JetBrains Mono',monospace" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium mb-1.5" style="color:var(--muted)">Model ID</label>
+            <input id="settings-model" type="text" placeholder="local-model"
+              class="field w-full px-3 py-2.5 text-sm" style="font-family:'JetBrains Mono',monospace" />
+            <p class="text-xs mt-1.5" style="color:var(--subtle)">Must match the model ID from the endpoint's <code style="font-family:'JetBrains Mono',monospace;color:#c084fc">/v1/models</code> list.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="text-xs font-semibold uppercase tracking-widest mb-4" style="color:var(--muted)">Search Backend</p>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-medium mb-1.5" style="color:var(--muted)">Provider</label>
+            <select id="settings-search-backend" class="field w-full px-3 py-2.5 text-sm" style="background:var(--surface-3);color:var(--text)">
+              <option value="duckduckgo">DuckDuckGo (free, no key required)</option>
+              <option value="langsearch">LangSearch (free API key required)</option>
+              <option value="brave">Brave Search (API key required)</option>
+              <option value="serpapi">SerpAPI (API key required)</option>
+            </select>
+          </div>
+          <div id="settings-langsearch-row" class="hidden space-y-2.5">
+            <div class="rounded-lg px-3.5 py-3 text-xs space-y-1.5" style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2)">
+              <p class="font-medium" style="color:#a5b4fc">Getting a LangSearch API key</p>
+              <ol class="space-y-1 list-decimal list-inside" style="color:var(--muted)">
+                <li>Go to <a href="https://langsearch.com/dashboard" target="_blank" rel="noopener" style="color:#818cf8;text-decoration:underline">langsearch.com/dashboard</a></li>
+                <li>Sign up for a free account</li>
+                <li>Copy your API key from the Dashboard page</li>
+                <li>Paste it below — free tier includes 1 000 searches/month</li>
+              </ol>
+            </div>
+            <div>
+              <label class="block text-xs font-medium mb-1.5" style="color:var(--muted)">LangSearch API Key</label>
+              <input id="settings-langsearch-key" type="password" placeholder="ls-…"
+                class="field w-full px-3 py-2.5 text-sm" style="font-family:'JetBrains Mono',monospace" />
+            </div>
+          </div>
+          <div id="settings-brave-row" class="hidden space-y-2.5">
+            <div class="rounded-lg px-3.5 py-3 text-xs space-y-1.5" style="background:rgba(251,146,60,.07);border:1px solid rgba(251,146,60,.2)">
+              <p class="font-medium" style="color:#fb923c">Getting a Brave Search API key</p>
+              <ol class="space-y-1 list-decimal list-inside" style="color:var(--muted)">
+                <li>Go to <a href="https://brave.com/search/api/" target="_blank" rel="noopener" style="color:#fb923c;text-decoration:underline">brave.com/search/api</a></li>
+                <li>Click <strong style="color:var(--text)">Get started for free</strong> and create an account</li>
+                <li>Subscribe to the Free tier (2 000 queries/month) or a paid plan</li>
+                <li>Navigate to API Keys and create a new key</li>
+                <li>Paste the key (starts with <code style="font-family:'JetBrains Mono',monospace">BSA</code>) below</li>
+              </ol>
+            </div>
+            <div>
+              <label class="block text-xs font-medium mb-1.5" style="color:var(--muted)">Brave Search API Key</label>
+              <input id="settings-brave-key" type="password" placeholder="BSA…"
+                class="field w-full px-3 py-2.5 text-sm" style="font-family:'JetBrains Mono',monospace" />
+            </div>
+          </div>
+          <div id="settings-serpapi-row" class="hidden space-y-2.5">
+            <div class="rounded-lg px-3.5 py-3 text-xs space-y-1.5" style="background:rgba(52,211,153,.07);border:1px solid rgba(52,211,153,.2)">
+              <p class="font-medium" style="color:#34d399">Getting a SerpAPI key</p>
+              <ol class="space-y-1 list-decimal list-inside" style="color:var(--muted)">
+                <li>Go to <a href="https://serpapi.com/users/sign_up" target="_blank" rel="noopener" style="color:#34d399;text-decoration:underline">serpapi.com/users/sign_up</a></li>
+                <li>Create a free account (100 searches/month included)</li>
+                <li>From your dashboard, copy the API key shown under <strong style="color:var(--text)">Your Private API Key</strong></li>
+                <li>Paste it below</li>
+              </ol>
+            </div>
+            <div>
+              <label class="block text-xs font-medium mb-1.5" style="color:var(--muted)">SerpAPI Key</label>
+              <input id="settings-serpapi-key" type="password" placeholder="serp_…"
+                class="field w-full px-3 py-2.5 text-sm" style="font-family:'JetBrains Mono',monospace" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="text-xs font-semibold uppercase tracking-widest mb-4" style="color:var(--muted)">Research Behaviour</p>
+        <div class="space-y-4">
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-medium" style="color:var(--muted)">Search results per query</label>
+              <span id="sl-search-val" class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface-3);color:#a5b4fc">5</span>
+            </div>
+            <input id="sl-search" type="range" min="1" max="30" step="1" value="5" class="w-full accent-indigo-500" style="cursor:pointer" oninput="$('sl-search-val').textContent=this.value" />
+            <p class="text-xs mt-1" style="color:var(--subtle)">More results = broader coverage, slower runs.</p>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-medium" style="color:var(--muted)">Max page content length</label>
+              <span id="sl-page-val" class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface-3);color:#a5b4fc">4 K</span>
+            </div>
+            <input id="sl-page" type="range" min="500" max="50000" step="500" value="4000" class="w-full accent-indigo-500" style="cursor:pointer"
+              oninput="$('sl-page-val').textContent=(this.value>=1000?(this.value/1000).toFixed(1)+' K':this.value+' chars')" />
+            <p class="text-xs mt-1" style="color:var(--subtle)">Chars read from each fetched page. Higher = deeper reads, more tokens.</p>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-medium" style="color:var(--muted)">Model context limit</label>
+              <span id="sl-ctx-val" class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface-3);color:#a5b4fc">256 K</span>
+            </div>
+            <input id="sl-ctx" type="range" min="16000" max="1000000" step="8000" value="256000" class="w-full accent-indigo-500" style="cursor:pointer"
+              oninput="$('sl-ctx-val').textContent=Math.round(this.value/1000)+' K'" />
+            <p class="text-xs mt-1" style="color:var(--subtle)">Set to your model's actual context window. Controls when the agent gets budget warnings.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="flex items-center justify-between mb-4">
+          <p class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Discover Endpoints</p>
+          <button id="discover-btn" class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors" style="background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.3)">
+            <span id="discover-btn-icon">🔍</span>
+            <span id="discover-btn-label">Scan Network</span>
+          </button>
+        </div>
+
+        <div id="discover-scanning" class="hidden text-xs italic flex items-center gap-2 py-2" style="color:var(--muted)">
+          <svg class="animate-spin h-3.5 w-3.5" style="color:var(--accent)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+          Scanning local network for AI endpoints…
+        </div>
+
+        <div id="discover-empty" class="hidden text-xs italic py-2" style="color:var(--muted)">
+          No AI endpoints found. Make sure LM Studio, Ollama, or another OpenAI-compatible server is running.
+        </div>
+
+        <div id="discover-results" class="hidden space-y-2"></div>
+      </section>
+    </div>
+
+    <!-- Footer -->
+    <div class="px-6 py-4 border-t flex items-center justify-between" style="border-color:var(--border);background:var(--surface)">
+      <span id="settings-save-status" class="text-xs" style="color:var(--muted)"></span>
+      <div class="flex items-center gap-2">
+        <button id="settings-cancel-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid var(--border)">Cancel</button>
+        <button id="settings-save-btn" class="btn-primary px-5 py-2 text-sm">Apply Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ EXPORT MODAL ══════════════════════════════ -->
+<div id="export-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.75);backdrop-filter:blur(8px)">
+  <div class="card-elevated w-full max-w-sm flex flex-col shadow-2xl" style="box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+    <div class="flex items-center justify-between px-5 py-4 border-b" style="border-color:var(--border)">
+      <div>
+        <div class="font-semibold text-sm" style="color:var(--text)">Export PDF</div>
+        <div class="text-xs mt-0.5" style="color:var(--muted)">Choose which sections to include</div>
+      </div>
+      <button id="export-modal-close" class="btn-ghost w-8 h-8 flex items-center justify-center text-lg">✕</button>
+    </div>
+
+    <!-- Presets -->
+    <div class="flex gap-2 px-5 pt-4">
+      <button id="export-preset-quick" class="flex-1 text-xs py-1.5 rounded-lg font-medium" style="background:var(--surface-3);border:1px solid var(--border);color:var(--muted)">Quick (report only)</button>
+      <button id="export-preset-full"  class="flex-1 text-xs py-1.5 rounded-lg font-medium" style="background:var(--surface-3);border:1px solid var(--border);color:var(--muted)">Full export</button>
+    </div>
+
+    <!-- Section checkboxes -->
+    <div class="px-5 py-4 space-y-2">
+      <label class="flex items-center gap-3 text-sm py-1 opacity-50 cursor-not-allowed">
+        <input type="checkbox" checked disabled class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Research Report</span>
+        <span class="ml-auto text-xs" style="color:var(--muted)">always</span>
+      </label>
+      <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
+        <input type="checkbox" id="exp-plan"    class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Research Plan</span>
+      </label>
+      <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
+        <input type="checkbox" id="exp-notes"   class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Research Notes</span>
+      </label>
+      <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
+        <input type="checkbox" id="exp-sources" class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Sources</span>
+      </label>
+      <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
+        <input type="checkbox" id="exp-stats"   class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Run Statistics</span>
+      </label>
+      <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
+        <input type="checkbox" id="exp-tree"    class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Branch Map</span>
+      </label>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex items-center justify-end gap-2 px-5 py-4 border-t" style="border-color:var(--border)">
+      <button id="export-modal-cancel" class="btn-ghost text-xs px-3 py-1.5">Cancel</button>
+      <button id="export-modal-confirm" class="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download PDF
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ CLARIFY MODAL ═════════════════════════════ -->
+<div id="clarify-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.75);backdrop-filter:blur(8px)">
+  <div class="card-elevated w-full max-w-xl flex flex-col shadow-2xl" style="box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+    <div class="flex items-start justify-between px-6 py-5 border-b" style="border-color:var(--border)">
+      <div>
+        <h2 class="font-semibold" style="color:var(--text)">Before we start</h2>
+        <p class="text-xs mt-0.5" style="color:var(--muted)">Answer any questions to sharpen the research focus — or skip to start immediately.</p>
+      </div>
+      <button id="clarify-close-btn" class="btn-ghost w-8 h-8 flex items-center justify-center text-lg ml-4">✕</button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <div class="text-xs px-3 py-2 rounded-lg" style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);color:#a5b4fc">
+        <span id="clarify-query-preview" class="font-medium italic"></span>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium" style="color:var(--text)">Scope — Any specific region, time period, or sector to focus on?</label>
+        <textarea id="clarify-q1" rows="2" placeholder="e.g. North America, last 5 years, renewable energy sector… (leave blank for broad coverage)"
+          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium" style="color:var(--text)">Audience — Who is this research for?</label>
+        <textarea id="clarify-q2" rows="2" placeholder="e.g. general audience, domain experts, executives, students, policymakers…"
+          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium" style="color:var(--text)">Recency — How important is up-to-date information?</label>
+        <textarea id="clarify-q3" rows="2" placeholder="e.g. must be from the last 12 months, historical context equally valuable, latest breakthroughs only…"
+          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
+      </div>
+      <div class="space-y-1.5">
+        <label class="block text-xs font-medium" style="color:var(--text)">Depth — Any sub-topics to emphasise or avoid?</label>
+        <textarea id="clarify-q4" rows="2" placeholder="e.g. focus on economic impact, skip technical implementation details, include case studies…"
+          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
+      </div>
+    </div>
+    <div class="px-6 py-4 border-t flex items-center justify-between" style="border-color:var(--border);background:var(--surface)">
+      <button id="clarify-skip-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid var(--border)">Skip — Start Now</button>
+      <button id="clarify-start-btn" class="btn-primary px-6 py-2 text-sm">Start Research →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ SCRIPT ════════════════════════════════════ -->
+<script>
+marked.setOptions({ breaks:true, gfm:true });
+
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  jobId: null, es: null, stage: 0, activeAgent: '',
+  activeReportFile: null, jobStartTime: null, elapsedTimer: null,
+  sourceMap: new Map(), noteCount: 0,
+};
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const $            = id => document.getElementById(id);
+const queryInput   = $('query-input');
+const startBtn     = $('start-btn');
+const cancelBtn    = $('cancel-btn');
+const formError    = $('form-error');
+const streamCard   = $('stream-card');
+const streamPanel  = $('stream-panel');
+const errorBanner  = $('error-banner');
+const reportCard   = $('report-card');
+const reportContent= $('report-content');
+const pipelineBar  = $('pipeline-bar');
+const workspace    = $('workspace');
+const idleSidebar  = $('idle-sidebar');
+const activeAgentBadge = $('active-agent-badge');
+const jobElapsed   = $('job-elapsed');
+
+// ── Agent config ────────────────────────────────────────────────────────────
+const AGENTS = {
+  'Research Specialist':             { chip:'chip-researcher', color:'#93c5fd', icon:'◈' },
+  'Critical Analyst & Fact-Checker': { chip:'chip-analyst',   color:'#fdba74', icon:'◈' },
+  'Critical Analyst':                { chip:'chip-analyst',   color:'#fdba74', icon:'◈' },
+  'Report Synthesizer':              { chip:'chip-synth',     color:'#6ee7b7', icon:'◈' },
+};
+function agentCfg(name) {
+  for (const [k,v] of Object.entries(AGENTS)) {
+    if (name && name.includes(k)) return v;
+  }
+  return { chip:'chip-system', color:'#c4b5fd', icon:'◈' };
+}
+
+// ── Health check ────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch('/health');
+    if (r.ok) {
+      $('server-status').textContent = '● Online';
+      $('server-status').className = 'text-xs px-2.5 py-1 rounded-full status-online';
+    } else throw new Error();
+  } catch {
+    $('server-status').textContent = '● Offline';
+    $('server-status').className = 'text-xs px-2.5 py-1 rounded-full status-offline';
+  }
+}
+
+// ── Stage pipeline ──────────────────────────────────────────────────────────
+function setStage(n) {
+  state.stage = n;
+  for (let i=1; i<=3; i++) {
+    const el = $(`stage-${i}`);
+    const icon = el.querySelector('.stage-icon');
+    el.className = 'flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium ';
+    if (n===4||i<n)  { el.className+='stage-done';    icon.textContent='✓'; }
+    else if (i===n)  { el.className+='stage-active';   icon.textContent='●'; }
+    else             { el.className+='stage-pending';  icon.textContent='○'; }
+  }
+}
+
+// ── Elapsed timer ───────────────────────────────────────────────────────────
+function startElapsed() {
+  state.jobStartTime = Date.now();
+  clearInterval(state.elapsedTimer);
+  state.elapsedTimer = setInterval(() => {
+    const s = Math.floor((Date.now()-state.jobStartTime)/1000);
+    jobElapsed.textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')} elapsed`;
+  }, 1000);
+}
+function stopElapsed() { clearInterval(state.elapsedTimer); }
+
+// ── Stream rendering ────────────────────────────────────────────────────────
+function clearStream() {
+  streamPanel.innerHTML = '<div class="italic py-3 text-center" style="color:var(--subtle)">Waiting for pipeline to start…</div>';
+}
+
+function removePlaceholder() {
+  const p = streamPanel.querySelector('.italic');
+  if (p) p.remove();
+}
+
+function appendStreamRow(cls, html) {
+  removePlaceholder();
+  const div = document.createElement('div');
+  div.className = `stream-entry rounded px-2.5 py-1.5 ${cls}`;
+  div.innerHTML = html;
+  streamPanel.appendChild(div);
+  streamPanel.scrollTop = streamPanel.scrollHeight;
+}
+
+function ts(t) {
+  return t ? `<span style="color:var(--subtle)" class="mr-1">[${t}]</span>` : '';
+}
+
+function agentChip(agent) {
+  const c = agentCfg(agent);
+  return `<span class="inline-block text-xs px-1.5 py-0.5 rounded font-medium ${c.chip} mr-1.5">${c.icon} ${esc(agent)}</span>`;
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function handleStreamEvent(ev) {
+  const type = ev.type || 'log';
+
+  switch (type) {
+
+    case 'agent_switch': {
+      const cfg = agentCfg(ev.agent);
+      state.activeAgent = ev.agent;
+      setStage(ev.stage || state.stage);
+      activeAgentBadge.className = `text-xs px-2.5 py-1 rounded-full font-medium agent-active ${cfg.chip}`;
+      activeAgentBadge.textContent = `${cfg.icon} ${ev.agent}`;
+      activeAgentBadge.classList.remove('hidden');
+      appendStreamRow('ev-switch font-semibold',
+        `${ts(ev.ts)}${agentChip(ev.agent)}<span style="color:${cfg.color}">▶ Stage ${ev.stage}/3 — ${esc(ev.agent)}</span>`);
+      break;
+    }
+
+    case 'search': {
+      appendStreamRow('ev-search',
+        `${ts(ev.ts)}<span style="color:#a5b4fc">⌕</span> <span style="color:#818cf8;font-weight:500">Search:</span> <span style="color:#c4b5fd">${esc(ev.query)}</span>`);
+      break;
+    }
+
+    case 'search_result': {
+      const items = (ev.results||[]).map(r =>
+        `<div style="margin-left:1.2rem;color:var(--muted);margin-top:.2rem">↳ <a href="${esc(r.url)}" target="_blank" style="color:#818cf8;text-decoration:underline">${esc(r.title||r.url)}</a> <span style="color:var(--subtle);font-size:.68rem">${esc(r.category||'')}</span></div>`
+      ).join('');
+      appendStreamRow('ev-search',
+        `${ts(ev.ts)}<span style="color:#6366f1">  ↳</span> <span style="color:var(--muted)">${ev.count} result${ev.count!==1?'s':''} found</span>`
+        + (items ? `<div style="margin-top:.2rem">${items}</div>` : ''));
+      (ev.results||[]).forEach(r => addSource(r.url, r.title, r.category, false));
+      break;
+    }
+
+    case 'fetch': {
+      appendStreamRow('ev-fetch',
+        `${ts(ev.ts)}<span style="color:#38bdf8">↗</span> <span style="color:#7dd3fc;font-weight:500">Read:</span> <a href="${esc(ev.url)}" target="_blank" style="color:#818cf8;text-decoration:underline;word-break:break-all">${esc(ev.url)}</a> <span style="color:var(--subtle);font-size:.68rem">${esc(ev.category||'')}</span>`);
+      break;
+    }
+
+    case 'fetch_content': {
+      appendStreamRow('ev-content',
+        `${ts(ev.ts)}<span style="color:#38bdf8">  │</span> <span style="color:var(--muted);font-style:italic">${esc((ev.preview||'').slice(0,300))}${(ev.preview||'').length>300?'…':''}</span>`);
+      addSource(ev.url, ev.url, ev.category, false);
+      break;
+    }
+
+    case 'step': {
+      if (!ev.content) break;
+      appendStreamRow('ev-step',
+        `${ts(ev.ts)}${agentChip(ev.agent||state.activeAgent)}<span style="color:#b0b0c8;white-space:pre-wrap">${esc(ev.content)}</span>`);
+      break;
+    }
+
+    case 'plan_update': {
+      appendStreamRow('ev-plan',
+        `${ts(ev.ts)}<span style="color:#fcd34d;font-weight:500">◆ Plan updated</span>`);
+      updatePlanPanel(ev.content || '');
+      activateTab('plan');
+      break;
+    }
+
+    case 'note_add': {
+      state.noteCount++;
+      appendStreamRow('ev-note',
+        `${ts(ev.ts)}<span style="color:#6ee7b7;font-weight:500">✎ Note #${state.noteCount}:</span> <span style="color:var(--muted)">${esc((ev.content||'').slice(0,120))}${(ev.content||'').length>120?'…':''}</span>`);
+      addNoteEntry(ev.content || '');
+      break;
+    }
+
+    case 'draft_update': {
+      appendStreamRow('ev-draft',
+        `${ts(ev.ts)}<span style="color:#c084fc;font-weight:500">✦ Draft updated</span>`);
+      updateDraftPanel(ev.content || '');
+      break;
+    }
+
+    case 'log': {
+      if (!ev.message) break;
+      const cls = ev.agent ? 'ev-step' : '';
+      appendStreamRow(cls,
+        `${ts(ev.ts||ev.time)}${ev.agent?agentChip(ev.agent):`<span style="color:var(--subtle)" class="mr-1">⚙</span>`}<span style="color:var(--muted)">${esc(ev.message)}</span>`);
+      const msg = ev.message || '';
+      if (msg.includes('Stage 1/3') && !msg.includes('complete')) setStage(1);
+      if (msg.includes('Stage 2/3') && !msg.includes('complete')) setStage(2);
+      if (msg.includes('Stage 3/3') && !msg.includes('complete')) setStage(3);
+      break;
+    }
+
+    case 'done': {
+      stopElapsed();
+      activeAgentBadge.classList.add('hidden');
+      if (ev.status === 'complete') {
+        setStage(4);
+        appendStreamRow('ev-done font-medium',
+          `<span style="color:#34d399">✓ Pipeline complete — report ready.</span>`);
+        if (ev.result) showReport(ev.result);
+        loadReports().then(() => {
+          if (window._cachedReports && window._cachedReports.length > 0) {
+            const latest = window._cachedReports[0].filename;
+            state.activeReportFile = latest;
+            loadArtifacts(latest).catch(() => {});
+          }
+        });
+      } else {
+        appendStreamRow('ev-error',
+          `<span style="color:#f87171">✗ Pipeline failed: ${esc(ev.result||'Unknown error')}</span>`);
+        showJobError(ev.result || 'The pipeline encountered an error.');
+      }
+      setFormEnabled(true);
+      break;
+    }
+  }
+}
+
+// ── Right panel management ──────────────────────────────────────────────────
+function activateTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id===`tab-${name}`));
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+});
+
+function updatePlanPanel(content) {
+  $('tab-plan').innerHTML = `<div class="prose text-xs">${marked.parse(content)}</div>`;
+}
+
+let _noteHtml = '';
+function addNoteEntry(content) {
+  _noteHtml = `<div class="rounded-lg p-3" style="background:var(--surface-3);border:1px solid var(--border)"><p class="text-xs leading-relaxed" style="color:#c8c8e0">${esc(content)}</p></div>` + _noteHtml;
+  $('tab-notes').innerHTML = _noteHtml || `<div class="text-xs italic" style="color:var(--subtle)">No notes yet.</div>`;
+}
+
+function updateDraftPanel(content) {
+  $('tab-draft').innerHTML = `<div class="prose text-xs">${marked.parse(content)}</div>`;
+}
+
+function addSource(url, title, category, confirmed) {
+  if (!url || url === 'N/A') return;
+  const existing = state.sourceMap.get(url);
+  if (existing && existing.confirmed) return;
+  state.sourceMap.set(url, {
+    title: title || url, category: category || '',
+    confirmed: confirmed || (existing && existing.confirmed) || false,
+  });
+  renderSourcesPanel();
+}
+
+function renderSourcesPanel() {
+  const entries = [...state.sourceMap.entries()];
+  if (!entries.length) {
+    $('tab-sources').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">No sources yet.</div>`;
+    return;
+  }
+  const html = entries.map(([url, s]) => {
+    const badgeCls = s.confirmed ? 'badge-confirmed' : 'badge-found';
+    const badgeText = s.confirmed ? '✓ Read' : '· Found';
+    let catCls = 'badge-found';
+    if (s.category.includes('Academic'))    catCls = 'badge-academic';
+    else if (s.category.includes('Government')) catCls = 'badge-gov';
+    else if (s.category.includes('News'))   catCls = 'badge-news';
+    else if (s.category.includes('Social')) catCls = 'badge-social';
+    return `<div class="rounded-lg p-2.5" style="background:var(--surface-3);border:1px solid var(--border)">
+      <div class="flex items-start gap-1.5 mb-1">
+        <span class="text-xs px-1.5 py-0.5 rounded font-medium ${badgeCls} shrink-0">${badgeText}</span>
+        ${s.category ? `<span class="text-xs px-1.5 py-0.5 rounded font-medium ${catCls} shrink-0">${esc(s.category)}</span>` : ''}
+      </div>
+      <a href="${esc(url)}" target="_blank" class="block text-xs break-all leading-tight" style="color:#818cf8;text-decoration:underline">${esc((s.title||url).slice(0,80))}</a>
+    </div>`;
+  }).join('');
+  $('tab-sources').innerHTML = html;
+}
+
+// ── SSE streaming ───────────────────────────────────────────────────────────
+function startStreaming(jobId) {
+  if (state.es) { state.es.close(); state.es = null; }
+  const es = new EventSource(`/api/jobs/${jobId}/stream`);
+  state.es = es;
+  es.onmessage = function(e) {
+    let ev;
+    try { ev = JSON.parse(e.data); } catch { return; }
+    handleStreamEvent(ev);
+    if (ev.type === 'done') { es.close(); state.es = null; }
+  };
+  es.onerror = function() {
+    if (es.readyState === EventSource.CLOSED) {
+      state.es = null;
+      appendStreamRow('ev-error', '<span style="color:#f87171">Stream connection closed unexpectedly.</span>');
+      setFormEnabled(true);
+    }
+  };
+}
+
+// ── Start research ──────────────────────────────────────────────────────────
+// ── Clarify modal ─────────────────────────────────────────────────────────────
+function openClarifyModal(query) {
+  ['clarify-q1','clarify-q2','clarify-q3','clarify-q4'].forEach(id => $(id).value = '');
+  const preview = query.length > 90 ? query.slice(0, 90) + '…' : query;
+  $('clarify-query-preview').textContent = preview;
+  $('clarify-modal').classList.remove('hidden');
+}
+function closeClarifyModal() { $('clarify-modal').classList.add('hidden'); }
+
+$('clarify-close-btn').addEventListener('click', closeClarifyModal);
+$('clarify-modal').addEventListener('click', e => { if (e.target===$('clarify-modal')) closeClarifyModal(); });
+
+$('clarify-skip-btn').addEventListener('click', () => {
+  closeClarifyModal();
+  startResearch('');
+});
+$('clarify-start-btn').addEventListener('click', () => {
+  const labels = ['Scope', 'Audience', 'Recency', 'Depth'];
+  const parts = [1,2,3,4].map((n,i) => {
+    const v = $(`clarify-q${n}`).value.trim();
+    return v ? `${labels[i]}: ${v}` : null;
+  }).filter(Boolean);
+  closeClarifyModal();
+  startResearch(parts.join('\n'));
+});
+
+startBtn.addEventListener('click', () => {
+  const query = queryInput.value.trim();
+  if (!query) {
+    formError.textContent = 'Please enter a research question.';
+    formError.classList.remove('hidden');
+    return;
+  }
+  formError.classList.add('hidden');
+  openClarifyModal(query);
+});
+queryInput.addEventListener('keydown', e => {
+  if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) {
+    const query = queryInput.value.trim();
+    if (query) { formError.classList.add('hidden'); openClarifyModal(query); }
+  }
+});
+
+async function startResearch(clarifications = '') {
+  const query = queryInput.value.trim();
+  if (!query) {
+    formError.textContent = 'Please enter a research question.';
+    formError.classList.remove('hidden');
+    return;
+  }
+  formError.classList.add('hidden');
+  clearStream();
+  errorBanner.classList.add('hidden');
+  reportCard.classList.add('hidden');
+  $('artifacts-card').classList.add('hidden');
+  $('tab-plan').innerHTML   = `<div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>`;
+  $('tab-notes').innerHTML  = `<div class="text-xs italic" style="color:var(--subtle)">Notes will accumulate as sources are read…</div>`;
+  $('tab-draft').innerHTML  = `<div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here…</div>`;
+  $('tab-sources').innerHTML= `<div class="text-xs italic" style="color:var(--subtle)">Sources will appear as they are fetched…</div>`;
+  state.sourceMap.clear();
+  state.noteCount = 0;
+  _noteHtml = '';
+  setStage(0);
+  streamCard.classList.remove('hidden');
+  pipelineBar.classList.remove('hidden');
+  workspace.classList.remove('hidden');
+  idleSidebar.classList.add('hidden');
+  setFormEnabled(false);
+  startElapsed();
+  try {
+    const res = await fetch('/api/jobs', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({query, clarifications}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({detail:'Unknown error'}));
+      throw new Error(err.detail || 'Failed to start job');
+    }
+    const data = await res.json();
+    state.jobId = data.job_id;
+    startStreaming(state.jobId);
+  } catch(err) {
+    showJobError(`Failed to start research: ${err.message}`);
+    setFormEnabled(true);
+    stopElapsed();
+  }
+}
+
+// ── Cancel ──────────────────────────────────────────────────────────────────
+cancelBtn.addEventListener('click', async () => {
+  if (!state.jobId) return;
+  try { await fetch(`/api/jobs/${state.jobId}/cancel`, {method:'POST'}); } catch {}
+  if (state.es) { state.es.close(); state.es = null; }
+  appendStreamRow('ev-error', '<span style="color:#fb923c">⚠ Job cancelled.</span>');
+  setFormEnabled(true);
+  stopElapsed();
+});
+
+// ── Citation processing ──────────────────────────────────────────────────────
+const _CITE_RE = /【(https?:\/\/[^|】\s]+)\s*\|\s*([^】]*)】/g;
+
+function _processCitations(html) {
+  const urlToN = {};
+  let n = 0;
+  // Replace 【url | category】 with [N] superscripts; tooltip via data-* attrs
+  return html.replace(_CITE_RE, (_, rawUrl, cat) => {
+    const url = rawUrl.trim().replace(/\/$/, '');
+    cat = cat.trim();
+    if (!(url in urlToN)) urlToN[url] = ++n;
+    const num = urlToN[url];
+    return `<sup class="cite-ref" data-n="${num}" data-url="${url.replace(/"/g,'&quot;')}" data-cat="${cat.replace(/"/g,'&quot;')}">[${num}]</sup>`;
+  });
+}
+
+// Tooltip element (shared, lazy-created)
+let _citeTip = null;
+let _citeTipTimer = null;
+
+function _initCiteTooltips(container) {
+  container.addEventListener('mouseover', e => {
+    const sup = e.target.closest('sup.cite-ref');
+    if (!sup) return;
+    clearTimeout(_citeTipTimer);
+    _citeTipTimer = setTimeout(() => {
+      if (!_citeTip) {
+        _citeTip = document.createElement('div');
+        _citeTip.className = 'cite-tooltip';
+        document.body.appendChild(_citeTip);
+      }
+      const n = sup.dataset.n;
+      const url = sup.dataset.url;
+      const cat = sup.dataset.cat;
+      const catHtml = cat ? `<div class="cite-tooltip-cat">${cat}</div>` : '';
+      _citeTip.innerHTML = `<div class="cite-tooltip-n">Source [${n}]</div><a href="${url}" target="_blank" rel="noopener">${url}</a>${catHtml}`;
+      const rect = sup.getBoundingClientRect();
+      _citeTip.style.left = Math.max(8, Math.min(rect.left - 10, window.innerWidth - 400)) + 'px';
+      _citeTip.style.top  = (rect.bottom + 8) + 'px';
+      _citeTip.classList.add('visible');
+    }, 600);
+  });
+  container.addEventListener('mouseout', e => {
+    if (!e.target.closest('sup.cite-ref')) return;
+    clearTimeout(_citeTipTimer);
+    if (_citeTip) _citeTip.classList.remove('visible');
+  });
+}
+
+// ── Report display ──────────────────────────────────────────────────────────
+function showReport(markdown) {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((l,i) => i>1 && l.trim()!=='');
+  const md = start>0 ? lines.slice(start).join('\n') : markdown;
+  reportContent.innerHTML = _processCitations(marked.parse(md || '*No content returned.*'));
+  _initCiteTooltips(reportContent);
+  reportCard.classList.remove('hidden');
+  // Scroll to artifacts card if visible (it's above the report), else the report itself
+  const artCard = $('artifacts-card');
+  const scrollTarget = (artCard && !artCard.classList.contains('hidden')) ? artCard : reportCard;
+  scrollTarget.scrollIntoView({behavior:'smooth', block:'start'});
+  const hasFile = !!state.activeReportFile;
+  $('export-pdf-btn').classList.toggle('hidden', !hasFile);
+}
+
+function showJobError(msg) {
+  errorBanner.textContent = `Error: ${msg}`;
+  errorBanner.classList.remove('hidden');
+}
+
+$('close-report-btn').addEventListener('click', () => {
+  reportCard.classList.add('hidden');
+  $('artifacts-card').classList.add('hidden');
+  state.activeReportFile = null;
+  $('export-pdf-btn').classList.add('hidden');
+  renderReportsList(window._cachedReports||[], 'reports-list');
+  renderReportsList(window._cachedReports||[], 'reports-list-idle');
+});
+
+// ── Export modal ─────────────────────────────────────────────────────────────
+const _EXP_KEYS  = ['plan','notes','sources','stats','tree'];
+const _EXP_IDS   = {plan:'exp-plan', notes:'exp-notes', sources:'exp-sources', stats:'exp-stats', tree:'exp-tree'};
+const _EXP_LS    = 'exportSections';
+
+function _expLoadPrefs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(_EXP_LS) || 'null');
+    if (saved && typeof saved === 'object') return saved;
+  } catch(_) {}
+  // Default: everything on
+  return Object.fromEntries(_EXP_KEYS.map(k => [k, true]));
+}
+function _expSavePrefs(prefs) {
+  try { localStorage.setItem(_EXP_LS, JSON.stringify(prefs)); } catch(_) {}
+}
+function _expApplyPrefs(prefs) {
+  for (const k of _EXP_KEYS) {
+    const el = $('' + _EXP_IDS[k]);
+    if (el) el.checked = !!prefs[k];
+  }
+}
+function _expReadPrefs() {
+  return Object.fromEntries(_EXP_KEYS.map(k => [k, !!$(_EXP_IDS[k])?.checked]));
+}
+function _expSetAll(on) {
+  for (const k of _EXP_KEYS) { const el = $(_EXP_IDS[k]); if (el) el.checked = on; }
+}
+
+$('export-pdf-btn').addEventListener('click', () => {
+  if (!state.activeReportFile) return;
+  _expApplyPrefs(_expLoadPrefs());
+  $('export-modal').classList.remove('hidden');
+});
+$('export-modal-close').addEventListener('click',  () => $('export-modal').classList.add('hidden'));
+$('export-modal-cancel').addEventListener('click', () => $('export-modal').classList.add('hidden'));
+$('export-modal').addEventListener('click', e => { if (e.target === $('export-modal')) $('export-modal').classList.add('hidden'); });
+
+$('export-preset-quick').addEventListener('click', () => _expSetAll(false));
+$('export-preset-full').addEventListener('click',  () => _expSetAll(true));
+
+$('export-modal-confirm').addEventListener('click', () => {
+  const prefs = _expReadPrefs();
+  _expSavePrefs(prefs);
+  const active = _EXP_KEYS.filter(k => prefs[k]);
+  const sectionsParam = active.length ? active.join(',') : 'none';
+  $('export-modal').classList.add('hidden');
+  window.location.href = `/api/reports/${encodeURIComponent(state.activeReportFile)}/export?format=pdf&sections=${sectionsParam}`;
+});
+
+// ── Form state ──────────────────────────────────────────────────────────────
+function setFormEnabled(enabled) {
+  startBtn.disabled = !enabled;
+  startBtn.textContent = enabled ? 'Start Research' : 'Running…';
+  queryInput.disabled = !enabled;
+  cancelBtn.classList.toggle('hidden', enabled);
+  if (enabled) activeAgentBadge.classList.add('hidden');
+}
+
+// ── Reports sidebar ──────────────────────────────────────────────────────────
+async function loadReports() {
+  try {
+    const res = await fetch('/api/reports');
+    if (!res.ok) return;
+    const body = await res.json();
+    const reports = Array.isArray(body) ? body : (body.reports || []);
+    window._cachedReports = reports;
+    renderReportsList(reports, 'reports-list');
+    renderReportsList(reports, 'reports-list-idle');
+  } catch {}
+}
+
+function renderReportsList(reports, listId) {
+  const el = $(listId);
+  if (!el) return;
+  if (!reports.length) {
+    el.innerHTML = `<p class="text-xs py-3 text-center" style="color:var(--muted)">No reports yet.</p>`;
+    return;
+  }
+  el.innerHTML = '';
+  for (const r of reports) {
+    const btn = document.createElement('button');
+    const isActive = r.filename === state.activeReportFile;
+    btn.className = `report-item w-full text-left px-3 py-2.5 text-xs${isActive?' active':''}`;
+    btn.innerHTML = `
+      <p class="font-medium truncate" style="color:${isActive?'#a5b4fc':'var(--text)'}" title="${esc(r.query)}">${esc(r.query.length>55 ? r.query.slice(0,55)+'…' : r.query)}</p>
+      <p class="mt-0.5" style="color:var(--muted)">${r.created}</p>`;
+    btn.addEventListener('click', () => viewReport(r.filename));
+    el.appendChild(btn);
+  }
+}
+
+async function viewReport(filename) {
+  try {
+    const res = await fetch(`/api/reports/${encodeURIComponent(filename)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.activeReportFile = filename;
+    showReport(data.content);
+    renderReportsList(window._cachedReports||[], 'reports-list');
+    renderReportsList(window._cachedReports||[], 'reports-list-idle');
+    loadArtifacts(filename).catch(() => {});
+  } catch(err) {
+    alert(`Could not load report: ${err.message}`);
+  }
+}
+
+$('refresh-reports-btn').addEventListener('click', loadReports);
+$('refresh-reports-idle-btn').addEventListener('click', loadReports);
+$('clear-stream-btn').addEventListener('click', () => { clearStream(); });
+
+// ── Artifact tabs ────────────────────────────────────────────────────────────
+let _treeLoaded = false;
+document.querySelectorAll('.art-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activateArtTab(btn.dataset.art);
+    if (btn.dataset.art === 'tree' && state.activeReportFile && !_treeLoaded) {
+      _treeLoaded = true;
+      fetch(`/api/reports/${encodeURIComponent(state.activeReportFile)}/tree`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(d => renderD3Tree(d.tree, 'art-tab-tree'))
+        .catch(() => {
+          $('art-tab-tree').innerHTML = `<div class="text-xs italic p-4" style="color:var(--muted)">No branch map available for this run (requires audit log).</div>`;
+        });
+    }
+  });
+});
+
+function activateArtTab(name) {
+  document.querySelectorAll('.art-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.art===name));
+  document.querySelectorAll('.art-tab-pane').forEach(p => {
+    p.classList.toggle('active', p.id===`art-tab-${name}`);
+    p.classList.toggle('hidden', p.id!==`art-tab-${name}`);
+  });
+}
+
+$('artifacts-toggle').addEventListener('click', () => {
+  const body = $('artifacts-body');
+  const open = !body.classList.contains('hidden');
+  body.classList.toggle('hidden', open);
+  $('artifacts-chevron').textContent = open ? '▲' : '▼';
+});
+
+const SEVERITY_ICON = { critical:'✗', warning:'⚠', info:'ℹ', good:'✓' };
+
+async function loadArtifacts(filename) {
+  _treeLoaded = false;  // reset so switching reports re-renders the tree
+  $('art-tab-tree').innerHTML = '';
+  const card = $('artifacts-card');
+  card.classList.remove('hidden');
+  $('artifacts-body').classList.remove('hidden');
+  $('artifacts-chevron').textContent = '▲';
+  activateArtTab('plan');
+  ['plan','notes','draft','sources','audit'].forEach(t => {
+    $(`art-tab-${t}`).innerHTML = `<div class="text-xs italic p-2" style="color:var(--muted)">Loading…</div>`;
+  });
+  $('artifacts-stats').innerHTML = '';
+  $('artifacts-eval').innerHTML  = `<div class="text-xs italic" style="color:var(--muted)">Loading evaluation…</div>`;
+  $('artifacts-grade-badge').classList.add('hidden');
+  $('artifacts-score-badge').classList.add('hidden');
+
+  const [metaRes, evalRes] = await Promise.allSettled([
+    fetch(`/api/reports/${encodeURIComponent(filename)}/meta`).then(r => r.ok ? r.json() : null),
+    fetch(`/api/reports/${encodeURIComponent(filename)}/evaluate`).then(r => r.ok ? r.json() : null),
+  ]);
+
+  const meta       = metaRes.status === 'fulfilled' ? metaRes.value : null;
+  const evaluation = evalRes.status  === 'fulfilled' ? evalRes.value  : null;
+
+  // Stats strip
+  if (meta) {
+    const fmt = v => v != null ? String(v) : '—';
+    const elapsed = meta.elapsed_seconds != null
+      ? `${Math.floor(meta.elapsed_seconds/60)}m ${meta.elapsed_seconds%60}s` : '—';
+    const stats = [
+      { label:'Pages Read', value: fmt(meta.fetch_count) },
+      { label:'Searches',   value: fmt(meta.search_count) },
+      { label:'Notes',      value: fmt(meta.note_count) },
+      { label:'Words',      value: fmt(meta.word_count) },
+      { label:'Elapsed',    value: elapsed },
+      { label:'Model',      value: (meta.model||'—').split('/').pop() },
+      { label:'Agents',     value: fmt((meta.agents_seen||[]).length) },
+      { label:'Sources',    value: fmt(meta.unique_url_count) },
+    ];
+    $('artifacts-stats').innerHTML = stats.map(s =>
+      `<div class="stat-cell">
+        <div class="text-sm font-semibold tabular-nums" style="color:var(--text)">${esc(s.value)}</div>
+        <div class="text-xs mt-0.5" style="color:var(--muted)">${esc(s.label)}</div>
+       </div>`
+    ).join('');
+  }
+
+  // Evaluation
+  if (evaluation) {
+    const gb = $('artifacts-grade-badge');
+    gb.textContent = `${evaluation.grade}`;
+    gb.className = `text-xs px-2 py-0.5 rounded-full font-bold grade-${evaluation.grade}`;
+    gb.classList.remove('hidden');
+    $('artifacts-score-badge').textContent = `${evaluation.score}/100`;
+    $('artifacts-score-badge').classList.remove('hidden');
+
+    if (evaluation.suggestions && evaluation.suggestions.length) {
+      $('artifacts-eval').innerHTML = evaluation.suggestions.map(s =>
+        `<div class="sev-${s.severity} rounded-lg px-3 py-2.5">
+          <div class="text-xs font-semibold" style="color:var(--text)">${SEVERITY_ICON[s.severity]||''} ${esc(s.title)}</div>
+          <div class="text-xs mt-0.5" style="color:var(--muted)">${esc(s.detail)}</div>
+         </div>`
+      ).join('');
+    } else {
+      $('artifacts-eval').innerHTML = `<div class="text-xs font-medium" style="color:#34d399">✓ No issues detected.</div>`;
+    }
+  } else {
+    $('artifacts-eval').innerHTML = `<div class="text-xs italic" style="color:var(--muted)">Evaluation not available for this run.</div>`;
+  }
+
+  // Lazy tab loads
+  async function loadTab(name, endpoint, render) {
+    try {
+      const r = await fetch(`/api/reports/${encodeURIComponent(filename)}/${endpoint}`);
+      if (!r.ok) { $(`art-tab-${name}`).innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">Not available for this run.</div>`; return; }
+      render(await r.json());
+    } catch { $(`art-tab-${name}`).innerHTML=`<div class="text-xs p-2" style="color:#f87171">Failed to load.</div>`; }
+  }
+
+  loadTab('plan', 'plan', d => {
+    $('art-tab-plan').innerHTML = d.content
+      ? `<div class="prose text-xs">${marked.parse(d.content)}</div>`
+      : `<div class="text-xs italic" style="color:var(--muted)">No plan was saved for this run.</div>`;
+  });
+
+  loadTab('notes', 'notes', d => {
+    if (!d.content) { $('art-tab-notes').innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">No notes were saved.</div>`; return; }
+    $('art-tab-notes').innerHTML = d.content.split('\n\n---\n\n').map(p =>
+      `<div class="rounded-lg p-3" style="background:var(--surface-3);border:1px solid var(--border)"><div class="prose text-xs">${marked.parse(p)}</div></div>`
+    ).join('');
+  });
+
+  loadTab('draft', 'draft', d => {
+    $('art-tab-draft').innerHTML = d.content
+      ? `<div class="prose text-xs">${marked.parse(d.content)}</div>`
+      : `<div class="text-xs italic" style="color:var(--muted)">No draft was saved for this run.</div>`;
+  });
+
+  loadTab('sources', 'sources', d => {
+    const srcs = d.sources || [];
+    if (!srcs.length) { $('art-tab-sources').innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">No sources captured.</div>`; return; }
+    $('art-tab-sources').innerHTML = srcs.map(s => {
+      let catCls = 'badge-found';
+      if ((s.category||'').includes('Academic'))  catCls = 'badge-academic';
+      else if ((s.category||'').includes('Gov'))  catCls = 'badge-gov';
+      else if ((s.category||'').includes('News')) catCls = 'badge-news';
+      else if ((s.category||'').includes('Social')) catCls = 'badge-social';
+      const sb = s.confirmed
+        ? `<span class="text-xs px-1.5 py-0.5 rounded font-medium badge-confirmed shrink-0">✓ Read</span>`
+        : `<span class="text-xs px-1.5 py-0.5 rounded font-medium badge-found shrink-0">· Found</span>`;
+      return `<div class="rounded-lg p-2.5" style="background:var(--surface-3);border:1px solid var(--border)">
+        <div class="flex items-center gap-1.5 flex-wrap mb-1">${sb}${s.category?`<span class="text-xs px-1.5 py-0.5 rounded font-medium ${catCls} shrink-0">${esc(s.category)}</span>`:''}  </div>
+        <a href="${esc(s.url)}" target="_blank" class="text-xs break-all" style="color:#818cf8;text-decoration:underline">${esc((s.title||s.url).slice(0,90))}</a>
+      </div>`;
+    }).join('');
+  });
+
+  loadTab('audit', 'audit', d => {
+    const events = d.events || [];
+    if (!events.length) { $('art-tab-audit').innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">No audit events.</div>`; return; }
+    const clsMap = { search:'ev-search', fetch:'ev-fetch', step:'ev-step', plan_update:'ev-plan', note_add:'ev-note', draft_update:'ev-draft', agent_switch:'ev-switch', done:'ev-done' };
+    $('art-tab-audit').innerHTML = events.map(ev => {
+      const t = ev.type || 'log';
+      return `<div class="rounded px-2 py-1 ${clsMap[t]||''}"><span style="color:var(--subtle)">[${esc(ev.ts||'')}]</span> <span style="color:var(--muted);font-weight:500">${esc(t)}</span> ${esc(ev.agent||ev.query||ev.url||ev.message||'')}${ev.content?` — ${esc(String(ev.content).slice(0,80))}`:''}  </div>`;
+    }).join('');
+  });
+}
+
+// ── D3 Branch Map renderer ───────────────────────────────────────────────────
+const _NODE_COLORS = {
+  query: '#6366f1', search: '#38bdf8', url: '#34d399',
+  fetch: '#fbbf24', note: '#c084fc',
+};
+const _NODE_RADIUS = { query:9, search:7, url:6, fetch:5, note:4 };
+
+function renderD3Tree(treeData, containerId) {
+  const container = $(containerId);
+  container.innerHTML = '';
+  if (!treeData) {
+    container.innerHTML = `<div class="text-xs italic p-4" style="color:var(--muted)">No branch data available.</div>`;
+    return;
+  }
+
+  const W = container.offsetWidth || 760;
+  const H = 440;
+  const margin = { top: 20, right: 160, bottom: 20, left: 60 };
+  const iW = W - margin.left - margin.right;
+  const iH = H - margin.top - margin.bottom;
+
+  const svg = d3.select(container).append('svg')
+    .attr('width', W).attr('height', H)
+    .style('background', 'var(--surface-2)');
+
+  // Tooltip
+  const tip = d3.select(container).append('div')
+    .style('position','absolute').style('pointer-events','none')
+    .style('display','none').style('max-width','260px')
+    .style('background','#1e1e33').style('border','1px solid #2e2e4a')
+    .style('border-radius','8px').style('padding','8px 10px')
+    .style('font-size','11px').style('color','#e4e4f0').style('z-index','10')
+    .style('line-height','1.5');
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  // Zoom + pan
+  svg.call(d3.zoom().scaleExtent([0.2, 3]).on('zoom', e => g.attr('transform', e.transform)));
+
+  const root = d3.hierarchy(treeData);
+  // Collapse all nodes beyond depth 2 initially
+  root.descendants().forEach(d => {
+    if (d.depth >= 2 && d.children) { d._children = d.children; d.children = null; }
+  });
+
+  const treeLayout = d3.tree().size([iH, iW]);
+
+  function update(source) {
+    treeLayout(root);
+    const nodes = root.descendants();
+    const links = root.links();
+
+    // Links
+    const link = g.selectAll('.tree-link').data(links, d => d.target.data.id);
+    link.enter().append('path').attr('class','tree-link')
+      .attr('fill','none').attr('stroke','#2e2e4a').attr('stroke-width',1.2)
+      .merge(link)
+      .attr('d', d3.linkHorizontal().x(d=>d.y).y(d=>d.x));
+    link.exit().remove();
+
+    // Nodes
+    const node = g.selectAll('.tree-node').data(nodes, d => d.data.id);
+    const nodeEnter = node.enter().append('g').attr('class','tree-node')
+      .attr('transform', d => `translate(${d.y},${d.x})`)
+      .style('cursor', d => d._children || d.children ? 'pointer' : 'default')
+      .on('click', (e, d) => {
+        if (d._children) { d.children = d._children; d._children = null; }
+        else if (d.children) { d._children = d.children; d.children = null; }
+        update(d);
+      })
+      .on('mouseover', (e, d) => {
+        let html = `<span style="color:${_NODE_COLORS[d.data.type]||'#a5b4fc'}">${d.data.type.toUpperCase()}</span><br/>${esc(d.data.label)}`;
+        if (d.data.url) html += `<br/><span style="color:#6a6a90;word-break:break-all">${esc(d.data.url)}</span>`;
+        if (d.data.content) html += `<br/><span style="color:#6a6a90">${esc(d.data.content.slice(0,150))}…</span>`;
+        tip.style('display','block').html(html)
+          .style('left', (e.offsetX+12)+'px').style('top', (e.offsetY-10)+'px');
+      })
+      .on('mousemove', e => tip.style('left',(e.offsetX+12)+'px').style('top',(e.offsetY-10)+'px'))
+      .on('mouseout', () => tip.style('display','none'));
+
+    nodeEnter.append('circle')
+      .attr('r', d => _NODE_RADIUS[d.data.type] || 5)
+      .attr('fill', d => _NODE_COLORS[d.data.type] || '#6366f1')
+      .attr('stroke', '#0b0b14').attr('stroke-width', 1.5)
+      .attr('opacity', d => d.data.confirmed === false && d.data.type === 'url' ? 0.45 : 1);
+
+    nodeEnter.append('text')
+      .attr('dy','0.31em')
+      .attr('x', d => (d._children || d.children) ? -10 : 10)
+      .attr('text-anchor', d => (d._children || d.children) ? 'end' : 'start')
+      .style('font-size','10px').style('fill','#c8c8e0')
+      .style('font-family','Inter,sans-serif')
+      .text(d => {
+        const max = d.data.type === 'search' ? 55 : 38;
+        return d.data.label.length > max ? d.data.label.slice(0, max) + '…' : d.data.label;
+      });
+
+    node.merge(nodeEnter).attr('transform', d => `translate(${d.y},${d.x})`);
+    node.exit().remove();
+  }
+
+  update(root);
+
+  // Legend
+  const legend = svg.append('g').attr('transform',`translate(${W-150},20)`);
+  Object.entries(_NODE_COLORS).forEach(([type, color], i) => {
+    legend.append('circle').attr('cx',6).attr('cy',i*18+4).attr('r',5).attr('fill',color);
+    legend.append('text').attr('x',16).attr('y',i*18+8)
+      .style('font-size','10px').style('fill','#6a6a90').style('font-family','Inter,sans-serif')
+      .text(type);
+  });
+}
+
+// ── Settings modal ───────────────────────────────────────────────────────────
+const settingsModal      = $('settings-modal');
+const settingsUrl        = $('settings-url');
+const settingsModel      = $('settings-model');
+const settingsSaveStatus = $('settings-save-status');
+
+function _updateSearchKeyRows(backend) {
+  $('settings-langsearch-row').classList.toggle('hidden', backend !== 'langsearch');
+  $('settings-brave-row').classList.toggle('hidden', backend !== 'brave');
+  $('settings-serpapi-row').classList.toggle('hidden', backend !== 'serpapi');
+}
+
+$('settings-search-backend').addEventListener('change', e => _updateSearchKeyRows(e.target.value));
+
+function openSettings() {
+  settingsModal.classList.remove('hidden');
+  settingsSaveStatus.textContent = '';
+  $('discover-results').classList.add('hidden');
+  $('discover-empty').classList.add('hidden');
+  $('discover-scanning').classList.add('hidden');
+  fetch('/api/settings').then(r=>r.json()).then(d=>{
+    settingsUrl.value   = d.base_url || '';
+    settingsModel.value = d.model    || '';
+    const backend = d.search_backend || 'duckduckgo';
+    $('settings-search-backend').value = backend;
+    $('settings-langsearch-key').value = d.langsearch_api_key || '';
+    $('settings-brave-key').value      = d.brave_api_key || '';
+    $('settings-serpapi-key').value    = d.serpapi_key || '';
+    _updateSearchKeyRows(backend);
+    // Sliders
+    const sr = d.max_search_results ?? 5;
+    const pc = d.max_page_content_length ?? 4000;
+    const ct = d.context_limit_tokens ?? 256000;
+    $('sl-search').value = sr; $('sl-search-val').textContent = sr;
+    $('sl-page').value   = pc; $('sl-page-val').textContent   = pc >= 1000 ? (pc/1000).toFixed(1)+' K' : pc+' chars';
+    $('sl-ctx').value    = ct; $('sl-ctx-val').textContent    = Math.round(ct/1000)+' K';
+  }).catch(()=>{});
+}
+
+function closeSettings() { settingsModal.classList.add('hidden'); }
+
+$('settings-btn').addEventListener('click', openSettings);
+$('settings-close-btn').addEventListener('click', closeSettings);
+$('settings-cancel-btn').addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', e => { if (e.target===settingsModal) closeSettings(); });
+
+$('settings-save-btn').addEventListener('click', async () => {
+  const url           = settingsUrl.value.trim();
+  const model         = settingsModel.value.trim() || 'local-model';
+  const search_backend      = $('settings-search-backend').value;
+  const langsearch_api_key  = $('settings-langsearch-key').value.trim();
+  const brave_api_key       = $('settings-brave-key').value.trim();
+  const serpapi_key         = $('settings-serpapi-key').value.trim();
+  const max_search_results      = parseInt($('sl-search').value, 10);
+  const max_page_content_length = parseInt($('sl-page').value, 10);
+  const context_limit_tokens    = parseInt($('sl-ctx').value, 10);
+  if (!url) {
+    settingsSaveStatus.textContent = 'Endpoint URL is required.';
+    settingsSaveStatus.style.color = '#f87171';
+    return;
+  }
+  settingsModel.value = model;
+  const btn = $('settings-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  settingsSaveStatus.textContent = '';
+  try {
+    const r = await fetch('/api/settings', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({base_url:url, model, search_backend, langsearch_api_key, brave_api_key, serpapi_key, max_search_results, max_page_content_length, context_limit_tokens}),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(()=>({detail:'Unknown error'}));
+      throw new Error(err.detail||`HTTP ${r.status}`);
+    }
+    settingsSaveStatus.textContent = '✓ Settings saved — takes effect on next run.';
+    settingsSaveStatus.style.color = '#34d399';
+    setTimeout(closeSettings, 1800);
+  } catch(err) {
+    settingsSaveStatus.textContent = `Error: ${err.message}`;
+    settingsSaveStatus.style.color = '#f87171';
+  } finally { btn.disabled=false; btn.textContent='Apply Settings'; }
+});
+
+$('discover-btn').addEventListener('click', async () => {
+  const btn = $('discover-btn');
+  $('discover-btn-label').textContent = 'Scanning…';
+  $('discover-btn-icon').textContent = '⏳';
+  btn.disabled = true;
+  $('discover-scanning').classList.remove('hidden');
+  $('discover-results').classList.add('hidden');
+  $('discover-empty').classList.add('hidden');
+
+  try {
+    const r = await fetch('/api/discover');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data  = await r.json();
+    const eps   = (data.endpoints||[]).filter(e=>e.online);
+    $('discover-scanning').classList.add('hidden');
+
+    if (!eps.length) {
+      $('discover-empty').classList.remove('hidden');
+    } else {
+      const container = $('discover-results');
+      container.innerHTML = '';
+      eps.forEach(ep => {
+        const card = document.createElement('div');
+        card.style.cssText = 'background:var(--surface-3);border:1px solid var(--border-2);border-radius:10px;padding:14px;transition:border-color .15s';
+        card.onmouseenter = ()=>{ card.style.borderColor='rgba(99,102,241,.5)'; };
+        card.onmouseleave = ()=>{ card.style.borderColor='var(--border-2)'; };
+
+        const modelOptions = (ep.models||[]).map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
+        const modelSelect  = ep.models && ep.models.length > 0
+          ? `<select id="ep-model-${esc(ep.url)}" style="margin-top:8px;width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:.72rem;font-family:'JetBrains Mono',monospace;color:var(--text)">${modelOptions}</select>`
+          : `<p style="margin-top:6px;font-size:.72rem;color:var(--muted);font-style:italic">No models listed</p>`;
+
+        card.innerHTML = `
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+            <div style="min-width:0;flex:1">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 6px #34d399;flex-shrink:0"></span>
+                <span style="font-size:.8rem;font-weight:600;color:var(--text)">${esc(ep.label||ep.url)}</span>
+              </div>
+              <p style="font-size:.7rem;font-family:'JetBrains Mono',monospace;color:var(--muted);margin-top:3px;word-break:break-all">${esc(ep.url)}</p>
+              ${modelSelect}
+            </div>
+            <button data-ep-url="${esc(ep.url)}" class="use-ep-btn" style="flex-shrink:0;margin-top:2px;padding:6px 14px;background:linear-gradient(135deg,#5b5fef,#7c3aed);color:white;font-size:.72rem;font-weight:600;border-radius:7px;cursor:pointer;white-space:nowrap;transition:opacity .15s">
+              Use This
+            </button>
+          </div>`;
+
+        card.querySelector('.use-ep-btn').addEventListener('click', function() {
+          const epUrl   = this.dataset.epUrl;
+          const sel     = document.getElementById(`ep-model-${epUrl}`);
+          const fullUrl = epUrl.endsWith('/v1') ? epUrl : epUrl.replace(/\/$/, '')+'/v1';
+          settingsUrl.value   = fullUrl;
+          settingsModel.value = sel ? sel.value : (ep.models&&ep.models[0])||'';
+          settingsSaveStatus.textContent = `Selected: ${fullUrl}`;
+          settingsSaveStatus.style.color = '#818cf8';
+        });
+        container.appendChild(card);
+      });
+      container.classList.remove('hidden');
+    }
+  } catch(err) {
+    $('discover-scanning').classList.add('hidden');
+    $('discover-empty').classList.remove('hidden');
+    $('discover-empty').textContent = `Scan failed: ${err.message}`;
+  } finally {
+    $('discover-btn-label').textContent = 'Scan Network';
+    $('discover-btn-icon').textContent  = '🔍';
+    btn.disabled = false;
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+checkHealth();
+loadReports();
+</script>
+</body>
+</html>

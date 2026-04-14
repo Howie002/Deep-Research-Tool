@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Runtime data
+research-agent/jobs/
+research-agent/reports/
+
+# Secrets / local config
+.env
+*.env
+local_settings.py
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.iml
+
+# Claude memory (local session data)
+.claude/
+
+# Logs
+*.log
