@@ -983,9 +983,10 @@ function handleStreamEvent(ev) {
     }
 
     case 'iteration_tick': {
-      const passLabel = ev.pass > 1 ? ` (pass ${ev.pass})` : '';
+      const passLabel = ev.pass > 1 ? ` — pass ${ev.pass}` : '';
+      const agentLabel = ev.agent ? ` · ${esc(ev.agent)}` : '';
       appendStreamRow('',
-        `${ts(ev.ts)}<span style="color:var(--subtle);font-size:.7rem">↺ Stage ${ev.stage} starting${passLabel}</span>`);
+        `${ts(ev.ts)}<span style="color:var(--subtle);font-size:.7rem">↺ Stage ${ev.stage}${agentLabel}${passLabel}</span>`);
       break;
     }
   }

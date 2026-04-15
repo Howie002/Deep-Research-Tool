@@ -189,9 +189,10 @@ def main() -> None:
                 "you are a ", "you excel at", "you are an expert",
                 "each finding must", "each claim", "each note must",
                 "write the final", "produce a clear", "review the research",
-                # gap analyst echoes
-                "step 1 — reflect", "step 2 — record", "step 3 — fill",
+                # gap analyst / gap fill echoes
+                "step 1 — review", "step 2 — identify gaps", "step 3 — classify",
                 "step 4 — note", "step 5 — output",
+                "analytical only", "still open: 0", "targeted gap research",
                 "review all research", "identify and fill", "gap analysis report",
             )
 
@@ -307,16 +308,17 @@ def main() -> None:
             )
             gap_analyst = Agent(
                 role="Gap Analyst",
-                goal="Identify what is still missing or unverified in the research and fill the most critical gaps with targeted follow-up.",
+                goal="Critically review all research findings and identify the most important gaps: unanswered questions, unverified claims, missing perspectives.",
                 backstory=(
-                    "You are a thorough research editor who specialises in spotting holes in arguments. "
-                    "You read the research and analyst's output critically, identify the weakest points "
-                    "where evidence is thin, claims are UNVERIFIED, or important counter-perspectives "
-                    "are absent, and run targeted searches to fill exactly those gaps. "
-                    "You focus on the highest-impact gaps only — not exhaustive coverage."
+                    "You are a rigorous research editor who specialises in gap analysis. "
+                    "You read the researcher's and analyst's findings critically, identify what is "
+                    "missing or weak, and produce a clear prioritised gap list for the research team. "
+                    "You do NOT run searches yourself — your job is pure analysis and identification. "
+                    "You are explicit: each gap is labelled RESOLVED, PARTIALLY RESOLVED, or STILL OPEN. "
+                    "You always close your response with exactly: STILL OPEN: N  (N = integer count)"
                 ),
-                tools=[search_tool, fetch_tool, note_tool, thought_tool],
-                llm=llm, verbose=verbose, allow_delegation=False, max_iter=5, max_rpm=10,
+                tools=[note_tool],
+                llm=llm, verbose=verbose, allow_delegation=False, max_iter=4, max_rpm=10,
             )
             synthesizer = Agent(
                 role="Report Synthesizer",
@@ -326,6 +328,19 @@ def main() -> None:
                 llm=_make_llm(temperature=0.5), verbose=verbose, allow_delegation=False, max_iter=4, max_rpm=10,
             )
 
+            # ── Satisfaction check for the gap loop ──────────────────────────
+            def _has_open_gaps(text: str) -> bool:
+                """Return True if the gap analyst output signals unresolved critical gaps."""
+                # Prefer the explicit "STILL OPEN: N" count line
+                m = re.search(r"still\s+open\s*:\s*(\d+)", text, re.IGNORECASE)
+                if m:
+                    return int(m.group(1)) > 0
+                # Fallback: bare "STILL OPEN" label present in the text
+                return "still open" in text.lower()
+
+            # Mutable closure state
+            _is_gap_fill_pass: list[bool] = [False]
+
             def _stage_callback(output):
                 raw_text = (
                     getattr(output, "raw", None)
@@ -334,35 +349,30 @@ def main() -> None:
                 ).strip()
                 agent_role = getattr(output, "agent", "") or ""
                 if "Research Specialist" in agent_role:
-                    _enforce_tool_calls(raw_text, stage=1)
-                    log("Stage 1/4 complete — handing off to Critical Analyst", agent="Research Specialist")
-                    log("Stage 2/4 — Critical Analyst: verifying key claims and flagging gaps", agent="Critical Analyst")
-                    _current_agent[0] = "Critical Analyst"
-                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Critical Analyst", "stage": 2, "pass": 1})
-                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Critical Analyst", "stage": 2})
+                    # Initial research = stage 1; targeted gap fill = stage 3
+                    stage = 3 if _is_gap_fill_pass[0] else 1
+                    _enforce_tool_calls(raw_text, stage=stage)
+                    if not _is_gap_fill_pass[0]:
+                        # Transition to analyst within phase-1 crew
+                        log("Stage 1/4 complete — handing off to Critical Analyst", agent="Research Specialist")
+                        log("Stage 2/4 — Critical Analyst: verifying key claims and flagging gaps", agent="Critical Analyst")
+                        _current_agent[0] = "Critical Analyst"
+                        _scratchpad.stream_event({"type": "iteration_tick", "agent": "Critical Analyst", "stage": 2, "pass": 1})
+                        _scratchpad.stream_event({"type": "agent_switch", "agent": "Critical Analyst", "stage": 2})
                 elif "Critical Analyst" in agent_role:
                     _enforce_tool_calls(raw_text, stage=2)
-                    log("Stage 2/4 complete — handing off to Gap Analyst", agent="Critical Analyst")
-                    log("Stage 3/4 — Gap Analyst: identifying and filling research gaps", agent="Gap Analyst")
-                    _current_agent[0] = "Gap Analyst"
-                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Gap Analyst", "stage": 3, "pass": 1})
-                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Gap Analyst", "stage": 3})
+                    log("Stage 2/4 complete — entering gap analysis loop", agent="Critical Analyst")
                 elif "Gap Analyst" in agent_role:
                     _enforce_tool_calls(raw_text, stage=3)
-                    log("Stage 3/4 complete — handing off to Report Synthesizer", agent="Gap Analyst")
-                    log("Stage 4/4 — Report Synthesizer: writing final report", agent="Report Synthesizer")
-                    _current_agent[0] = "Report Synthesizer"
-                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Report Synthesizer", "stage": 4, "pass": 1})
-                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Report Synthesizer", "stage": 4})
+                elif "Report Synthesizer" in agent_role:
+                    _enforce_tool_calls(raw_text, stage=4)
 
             def _step_callback(step_output):
                 """Stream each agent reasoning step to the UI."""
                 try:
                     agent = _current_agent[0]
-                    # LangChain AgentAction / AgentFinish both expose .log
                     raw = getattr(step_output, "log", None) or ""
                     if not raw:
-                        # Newer CrewAI may wrap output differently
                         raw = str(getattr(step_output, "output", "") or
                                   getattr(step_output, "return_values", {}).get("output", ""))
                     raw = _THINK_RE.sub("", raw).strip()
@@ -375,6 +385,7 @@ def main() -> None:
                 except Exception:
                     pass
 
+            # ── Phase 1: Research + Analysis (single crew) ────────────────────
             research_task = Task(
                 description=(
                     f"Research the following query thoroughly:\n\n  QUERY: {q}\n{_CLARIF_BLOCK}\n"
@@ -431,36 +442,153 @@ def main() -> None:
                 ),
                 agent=analyst, context=[research_task],
             )
-            gap_task = Task(
-                description=(
-                    f"Review all research and verification done so far on: '{q}'\n{_CLARIF_BLOCK}\n"
-                    "Your job is to identify and fill the most critical gaps before the final report is written.\n\n"
-                    "STEP 1 — REFLECT: Review the research and analyst's findings. Ask yourself:\n"
-                    "  - What important questions remain unanswered?\n"
-                    "  - Which key claims are UNVERIFIED or CONTESTED and need more evidence?\n"
-                    "  - What counter-arguments or opposing viewpoints haven't been explored?\n"
-                    "  - What context is missing that would significantly strengthen the report?\n"
-                    "  Identify the top 2–3 gaps in priority order.\n\n"
-                    "STEP 2 — RECORD THOUGHTS (REQUIRED): Before each targeted search, call "
-                    "record_thought to narrate which gap you are addressing "
-                    "(e.g. 'Filling gap: no evidence on funding breakdown').\n\n"
-                    "STEP 3 — FILL: For the top 2–3 gaps, run targeted web_search queries, "
-                    "then fetch_webpage on the most relevant results. Be specific — target exactly what is missing.\n\n"
-                    "STEP 4 — NOTE (REQUIRED): After each new finding, call add_note including: "
-                    "which gap it addresses, what was found, and whether the gap is now resolved.\n\n"
-                    "STEP 5 — OUTPUT: Return a concise gap analysis report listing each gap identified, "
-                    "its resolution status (RESOLVED / PARTIALLY RESOLVED / STILL OPEN), "
-                    "and any remaining unknowns the synthesizer should acknowledge."
-                ),
-                expected_output=(
-                    "A gap analysis report listing each gap identified with its resolution status "
-                    "and key new findings. The add_note tool MUST have been called at least once."
-                ),
-                agent=gap_analyst, context=[research_task, verification_task],
+
+            _current_agent[0] = "Research Specialist"
+            _scratchpad.stream_event({"type": "iteration_tick", "agent": "Research Specialist", "stage": 1, "pass": 1})
+            _scratchpad.stream_event({"type": "agent_switch", "agent": "Research Specialist", "stage": 1})
+
+            phase1_crew = Crew(
+                agents=[researcher, analyst],
+                tasks=[research_task, verification_task],
+                process=Process.sequential,
+                verbose=verbose,
+                task_callback=_stage_callback,
+                step_callback=_step_callback,
             )
+            phase1_crew.kickoff()
+
+            # ── Gap loop: Identification → Targeted Research (up to N passes) ──
+            # The Gap Analyst is ANALYTICAL ONLY — it reads findings and lists gaps.
+            # The Researcher then fills STILL OPEN gaps with targeted searches.
+            # Repeats until no critical gaps remain or MAX_GAP_PASSES is reached.
+            MAX_GAP_PASSES = 2
+            all_gap_id_tasks:   list[Task] = []
+            all_gap_fill_tasks: list[Task] = []
+
+            for gap_pass in range(1, MAX_GAP_PASSES + 1):
+                # ── 3a: Gap Analyst identifies gaps (no searches) ──────────────
+                _is_gap_fill_pass[0] = False
+                _current_agent[0] = "Gap Analyst"
+                pass_label = f"pass {gap_pass}/{MAX_GAP_PASSES}"
+                prior_fill = bool(all_gap_fill_tasks)
+                log(f"Stage 3/4 — Gap Analyst: identifying research gaps ({pass_label})", agent="Gap Analyst")
+                _scratchpad.stream_event({"type": "iteration_tick", "agent": "Gap Analyst", "stage": 3, "pass": gap_pass})
+                _scratchpad.stream_event({"type": "agent_switch", "agent": "Gap Analyst", "stage": 3})
+
+                gap_id_task = Task(
+                    description=(
+                        f"[Gap Analysis — {pass_label}] Review ALL findings: the initial research, "
+                        f"the analyst's verification"
+                        + (", and the targeted gap research from the previous pass" if prior_fill else "")
+                        + f".\n{_CLARIF_BLOCK}\n"
+                        "ANALYTICAL ONLY — do not run searches. Read what has been gathered and identify what is still missing.\n\n"
+                        "STEP 1 — REVIEW: Read the full set of research notes, verification findings"
+                        + (", and prior gap research results" if prior_fill else "")
+                        + ".\n\n"
+                        "STEP 2 — IDENTIFY GAPS: List the 2–4 most important gaps:\n"
+                        "  - Unanswered questions raised by the research\n"
+                        "  - Claims labelled [UNVERIFIED] or [CONTESTED] lacking sufficient evidence\n"
+                        "  - Missing counter-arguments or opposing viewpoints\n"
+                        "  - Missing context that would materially strengthen the final report\n\n"
+                        "STEP 3 — CLASSIFY each gap with one of:\n"
+                        "  RESOLVED — fully addressed by available research\n"
+                        "  PARTIALLY RESOLVED — touched but incomplete\n"
+                        "  STILL OPEN — critical, unaddressed, would meaningfully improve the report\n\n"
+                        "STEP 4 — NOTE (optional): Call add_note to record your gap analysis summary.\n\n"
+                        "STEP 5 — OUTPUT: List each gap with its classification and a one-line explanation.\n"
+                        "  Your final line MUST be exactly: STILL OPEN: N  (N = integer count of STILL OPEN gaps)"
+                    ),
+                    expected_output=(
+                        "A prioritised gap list. Each gap labelled RESOLVED / PARTIALLY RESOLVED / STILL OPEN. "
+                        "Last line MUST be: STILL OPEN: N"
+                    ),
+                    agent=gap_analyst,
+                    context=[research_task, verification_task] + all_gap_fill_tasks,
+                )
+
+                gap_id_crew = Crew(
+                    agents=[gap_analyst],
+                    tasks=[gap_id_task],
+                    process=Process.sequential,
+                    verbose=verbose,
+                    task_callback=_stage_callback,
+                    step_callback=_step_callback,
+                )
+                gap_id_crew.kickoff()
+                all_gap_id_tasks.append(gap_id_task)
+
+                gap_output = (
+                    (gap_id_task.output.raw if gap_id_task.output else "") or ""
+                ).strip()
+
+                # ── Satisfaction check ─────────────────────────────────────────
+                if not _has_open_gaps(gap_output):
+                    log("Gap Analyst satisfied — no critical gaps remain. Proceeding to synthesis.", agent="Gap Analyst")
+                    break
+                if gap_pass >= MAX_GAP_PASSES:
+                    log(
+                        f"Gap Analyst: max passes ({MAX_GAP_PASSES}) reached. "
+                        "Proceeding to synthesis — remaining open items noted in Caveats.",
+                        agent="Gap Analyst",
+                    )
+                    break
+
+                # ── 3b: Researcher fills STILL OPEN gaps with targeted searches ─
+                _is_gap_fill_pass[0] = True
+                _current_agent[0] = "Research Specialist"
+                log(f"Stage 3/4 — Research Specialist: targeted gap research ({pass_label})", agent="Research Specialist")
+                _scratchpad.stream_event({"type": "iteration_tick", "agent": "Research Specialist", "stage": 3, "pass": gap_pass})
+                _scratchpad.stream_event({"type": "agent_switch", "agent": "Research Specialist", "stage": 3})
+
+                gap_fill_task = Task(
+                    description=(
+                        f"TARGETED GAP RESEARCH — {pass_label}\n\n"
+                        "The Gap Analyst reviewed all research and identified these open issues:\n\n"
+                        f"{gap_output}\n\n"
+                        "Your job: fill ONLY the gaps labelled STILL OPEN above. "
+                        "Skip RESOLVED and PARTIALLY RESOLVED items — they are already covered.\n\n"
+                        "For each STILL OPEN gap:\n"
+                        "STEP 1 — RECORD THOUGHT (REQUIRED): Call record_thought naming the gap you are addressing "
+                        "(e.g. 'Filling gap: funding breakdown not found').\n"
+                        "STEP 2 — SEARCH: Run 2–3 targeted web_search queries specific to this gap. "
+                        "Use precise, gap-focused phrasing. Do not repeat searches already done.\n"
+                        "STEP 3 — FETCH: Call fetch_webpage on the 2 most relevant results.\n"
+                        "STEP 4 — NOTE (REQUIRED): Call add_note with:\n"
+                        "  - The gap label (copy from the list above)\n"
+                        "  - What you found (or 'Not found after targeted search' if nothing relevant)\n"
+                        "  - Your resolution assessment: RESOLVED / PARTIALLY RESOLVED / STILL OPEN\n\n"
+                        "Do not re-research already resolved items. Focus exclusively on STILL OPEN gaps."
+                    ),
+                    expected_output=(
+                        "A summary of targeted findings for each STILL OPEN gap with resolution assessment. "
+                        "record_thought and add_note MUST have been called for each gap researched."
+                    ),
+                    agent=researcher,
+                    context=[research_task, verification_task] + all_gap_id_tasks + all_gap_fill_tasks,
+                )
+
+                gap_fill_crew = Crew(
+                    agents=[researcher],
+                    tasks=[gap_fill_task],
+                    process=Process.sequential,
+                    verbose=verbose,
+                    task_callback=_stage_callback,
+                    step_callback=_step_callback,
+                )
+                gap_fill_crew.kickoff()
+                all_gap_fill_tasks.append(gap_fill_task)
+
+            # ── Phase 3: Synthesis ─────────────────────────────────────────────
+            _is_gap_fill_pass[0] = False
+            _current_agent[0] = "Report Synthesizer"
+            log("Stage 4/4 — Report Synthesizer: writing final report", agent="Report Synthesizer")
+            _scratchpad.stream_event({"type": "iteration_tick", "agent": "Report Synthesizer", "stage": 4, "pass": 1})
+            _scratchpad.stream_event({"type": "agent_switch", "agent": "Report Synthesizer", "stage": 4})
+
             synthesis_task = Task(
                 description=(
                     f"Write the final research report answering: '{q}'\n{_CLARIF_BLOCK}\n"
+                    "You have access to the full research output including any targeted gap-filling research.\n\n"
                     "You MUST use tools in this sequence:\n\n"
                     "STEP 1 — DRAFT (REQUIRED FIRST): Before writing anything, call update_draft "
                     "with a complete Markdown draft of the report. Structure it as:\n"
@@ -472,7 +600,7 @@ def main() -> None:
                     "Rules for ALL content:\n"
                     "- Be factual and direct. Every claim must have a citation.\n"
                     "- If information is insufficient, say so clearly.\n"
-                    "- The gap analysis stage identified remaining unknowns — acknowledge these in Caveats.\n"
+                    "- The gap analysis identified remaining unknowns — acknowledge these explicitly in Caveats.\n"
                     "- CITATION INTEGRITY: Only cite URLs that were explicitly returned by "
                     "web_search or fetch_webpage during this session. NEVER invent or guess URLs. "
                     "Write [source not retrieved] instead of fabricating a link."
@@ -482,23 +610,19 @@ def main() -> None:
                     "Analysis, Caveats, and a numbered Sources list. All cited URLs must have been "
                     "explicitly found during this session. The update_draft tool MUST have been called."
                 ),
-                agent=synthesizer, context=[research_task, verification_task, gap_task],
+                agent=synthesizer,
+                context=[research_task, verification_task] + all_gap_id_tasks + all_gap_fill_tasks,
             )
 
-            # Emit the initial agent_switch and iteration tick for the researcher
-            _current_agent[0] = "Research Specialist"
-            _scratchpad.stream_event({"type": "iteration_tick", "agent": "Research Specialist", "stage": 1, "pass": 1})
-            _scratchpad.stream_event({"type": "agent_switch", "agent": "Research Specialist", "stage": 1})
-
-            crew = Crew(
-                agents=[researcher, analyst, gap_analyst, synthesizer],
-                tasks=[research_task, verification_task, gap_task, synthesis_task],
+            synthesis_crew = Crew(
+                agents=[synthesizer],
+                tasks=[synthesis_task],
                 process=Process.sequential,
                 verbose=verbose,
                 task_callback=_stage_callback,
                 step_callback=_step_callback,
             )
-            return str(crew.kickoff())
+            return str(synthesis_crew.kickoff())
 
         result = _instrumented_run(query, clarifications=clarifications)
         from tools import _search_cache

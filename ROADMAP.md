@@ -96,17 +96,17 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
 - `[x]` Post-hoc extraction: after each task, checks the stream file for missed tool calls and calls note/plan/draft tools directly from Python if the LLM skipped them
 
 ### "What Am I Missing?" Gap Analysis Phase (shipped ✅)
-- `[x]` Add a **gap analysis sub-task** between verification and synthesis
-  - After the analyst finishes, a short self-reflection pass asks: "What questions raised by this research are still unanswered? What threads were touched but not followed? What counter-narratives or opposing viewpoints haven't been explored?"
-  - The agent generates a prioritised list of under-developed threads and runs targeted searches on the top 2–3
-  - Results are added as notes and fed into the synthesizer, so the final report explicitly acknowledges what was and wasn't resolved
-  - Visible in the UI as a fourth stage indicator: "Gap Analysis"
-  - Saves a `gaps.md` artifact alongside the other run files; viewable in the new "Gaps" art-tab
+- `[x]` A **two-part gap loop** runs between Analysis and Synthesis (up to `MAX_GAP_PASSES = 2` iterations):
+  - **Gap Analyst** (analytical only — no searches): reads all findings, classifies each gap as RESOLVED / PARTIALLY RESOLVED / STILL OPEN, closes with `STILL OPEN: N`
+  - **Research Specialist** (targeted fill): receives the gap list, runs focused searches on STILL OPEN items only, records findings with add_note
+  - Loop repeats until N == 0 (all gaps resolved) or max passes reached
+  - **Satisfied when:** `STILL OPEN: 0` in the gap analyst's output, or `MAX_GAP_PASSES` exhausted — whichever comes first; remaining open items are acknowledged in the report's Caveats section
+  - Saves `gaps.md` artifact (notes from stage 3 passes); viewable in the "Gaps" art-tab
 
 ### Agent Rotation (Iterative Collaboration) (shipped ✅)
-- `[x]` Implemented as the **Gap Analyst** stage — delivers the rotation value (targeted follow-up on analyst findings) without reimplementing pipeline orchestration
-  - Gap Analyst receives context from both researcher and analyst tasks, identifies insufficiently-covered threads, and runs targeted searches before synthesis
-  - True dynamic back-handoff between arbitrary agents remains a future option if needed
+- `[x]` Implemented as the **Gap Analysis Loop** — analyst findings hand back to the researcher for targeted follow-up, then gap analyst re-evaluates; this is true rotation (Gap Analyst → Researcher → Gap Analyst) within stage 3
+  - Pipeline is orchestrated as multiple sequential `Crew` objects rather than a monolithic four-task crew, enabling conditional re-entry
+  - Synthesis crew receives the full context of all gap identification and fill tasks regardless of how many passes ran
 
 ### Iteration Count & Thread Tracking (shipped ✅)
 - `[x]` Track and display the **number of passes each agent has taken** across the full run
