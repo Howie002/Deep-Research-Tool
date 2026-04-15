@@ -14,6 +14,24 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - Answers are injected into the task prompts so all three agents have fuller context
   - The "Start Research" button becomes "Review Brief → Start" to make the step feel intentional
 
+### Dynamic Clarifying Questions (LLM-Generated, Prompt-Aware) (shipped ✅)
+- `[x]` **Replace the four static questions with questions the model generates live from the actual research prompt** — the current questions (Scope, Audience, Recency, Depth) are generic and identical for every query; they don't reflect what matters most for a specific request
+  - When the user submits a query, a fast LLM call generates 3–5 questions tailored to that specific topic before the modal opens — e.g. for "Research Chris Speier at the Texas A&M Foundation" the questions might be: "Should I include his role in the 12th Man Foundation separately or treat all A&M entities as one?", "Do you want family/personal background or strictly professional?", "How far back should career history go?", "Any specific achievements or projects to prioritise?"
+  - Questions are generated via a short system prompt: *"Given this research request, generate 3–5 clarifying questions that would most sharpen the research. Each question should be specific to this topic, not generic. Return as a JSON array of {question, placeholder} objects."*
+  - The modal renders questions dynamically from the LLM response — label and placeholder text both come from the model
+  - A loading skeleton shows while questions are being generated (typically < 2s on a fast model)
+  - `POST /api/clarify` endpoint accepts `{query}` and returns `{questions: [{question, placeholder}]}`; the frontend calls this when the query is submitted, before showing the modal
+  - Questions are generated in parallel with any other pre-flight work so they're ready by the time the modal opens
+  - Fallback: if the LLM call fails or times out (>5s), the modal falls back to the current static questions silently
+
+### "Use Your Best Judgement" on Clarifying Questions (shipped ✅)
+- `[x]` **Add a "Use Your Best Judgement" button to the clarifying questions modal** — lets the user skip answering and trust the model to make sensible decisions for every open question
+  - Button appears alongside the existing "Skip" and "Start Research" buttons: `[Use Your Best Judgement]  [Skip]  [Start Research →]`
+  - When clicked, a single clarification string is injected into the task prompts: *"The user has not provided specific guidance. Use your best judgement on scope, depth, audience, and recency based on the nature of the query."*
+  - This is distinct from "Skip" (which passes empty clarifications) — "Use Your Best Judgement" gives the agents an explicit mandate to self-direct, which produces noticeably more confident and opinionated research
+  - The button label in context: clicking it should feel like telling a trusted analyst "just run with it — I trust you"
+  - Optionally: after the run, the report header shows a small badge "Agent used own judgement" so the user knows which decisions were autonomous
+
 ---
 
 ## Live Workspace / UI
@@ -27,16 +45,16 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
 - `[x]` Stage pipeline bar with agent colour-coding
 - `[x]` Cancel button, elapsed timer
 
-### Live Plan Evolution
-- `[ ]` **Dynamic plan panel with checkoff tracking** — the Plan tab shows the research plan as a living document, not a static snapshot
+### Live Plan Evolution (shipped ✅)
+- `[x]` **Dynamic plan panel with checkoff tracking** — the Plan tab shows the research plan as a living document, not a static snapshot
   - Each bullet in the plan is rendered as a checklist item; the agent checks items off by calling `update_plan` with `[x]` markers
   - New items added mid-run appear with a subtle "added" highlight; completed items get a strikethrough with a timestamp
   - A plan diff timeline shows each version side-by-side so you can see how the strategy shifted as new evidence was found
   - The plan panel pulses briefly when updated so it's clear something changed without requiring the user to watch it
   - Plan version history saved in the artifact directory alongside the final `plan.md`
 
-### Research Notebook (Notes + Sources unified)
-- `[ ]` **Merge the Notes and Sources panels into a single "Research Notebook"** — modelled on how a researcher builds source material for a paper
+### Research Notebook (Notes + Sources unified) (shipped ✅)
+- `[x]` **Merge the Notes and Sources panels into a single "Research Notebook"** — modelled on how a researcher builds source material for a paper
   - Each source becomes a **notebook card**: title, URL, source type badge, credibility tier, and the agent's own notes extracted from that page beneath it
   - Cards are added live as pages are fetched and notes are recorded — the notebook grows in real time
   - Each card has a collapsible "Evidence" section showing the key facts the agent pulled from that source, formatted as bullet points

@@ -107,6 +107,21 @@
     @keyframes pulse-dot{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.5; transform:scale(.85); } }
     @keyframes shimmer  { from{background-position:200% center} to{background-position:-200% center} }
     @keyframes glow-in  { from{ box-shadow:0 0 0 0 var(--accent-glow); } to{ box-shadow:0 0 16px 4px var(--accent-glow); } }
+    @keyframes plan-pulse-kf { 0%,100%{ color:var(--muted); } 40%{ color:#a5b4fc; text-shadow:0 0 8px rgba(99,102,241,.7); } }
+    .plan-pulse { animation: plan-pulse-kf .7s ease; }
+    @keyframes skel-shimmer { from{background-position:200% center} to{background-position:-200% center} }
+    .skeleton-line {
+      background: linear-gradient(90deg, var(--surface-3) 25%, #252540 50%, var(--surface-3) 75%);
+      background-size: 200% 100%;
+      animation: skel-shimmer 1.4s infinite;
+      border-radius: 4px;
+    }
+    /* plan checklist */
+    .plan-checklist ul { list-style: none; padding-left: 0; }
+    .plan-checklist li { display: flex; gap: .5rem; align-items: flex-start; margin-bottom: .3rem; }
+    .plan-checklist input[type="checkbox"] { margin-top: .18rem; flex-shrink: 0; accent-color: var(--accent); }
+    /* notebook orphan notes */
+    .nb-orphan { background: rgba(16,185,129,.06); border: 1px solid rgba(16,185,129,.2); }
 
     .stream-entry { animation: fadeIn .2s ease; }
     .agent-active { animation: pulse-dot 2s ease-in-out infinite; }
@@ -420,21 +435,17 @@
     <div class="card overflow-hidden">
       <div class="flex border-b" style="background:var(--surface-2);border-color:var(--border)">
         <button class="tab-btn active flex-1 text-xs font-medium px-3 py-3" data-tab="plan">Plan</button>
-        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="notes">Notes</button>
+        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="notebook">Notebook</button>
         <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="draft">Draft</button>
-        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="sources">Sources</button>
       </div>
       <div id="tab-plan" class="tab-pane active p-3.5 panel-scroll">
         <div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>
       </div>
-      <div id="tab-notes" class="tab-pane p-3.5 space-y-2 panel-scroll">
-        <div class="text-xs italic" style="color:var(--subtle)">Notes will accumulate as sources are read…</div>
+      <div id="tab-notebook" class="tab-pane p-3.5 space-y-2 panel-scroll">
+        <div class="text-xs italic" style="color:var(--subtle)">Sources and notes will accumulate here as research progresses…</div>
       </div>
       <div id="tab-draft" class="tab-pane p-3.5 panel-scroll">
         <div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here as research progresses…</div>
-      </div>
-      <div id="tab-sources" class="tab-pane p-3.5 space-y-2 panel-scroll">
-        <div class="text-xs italic" style="color:var(--subtle)">Sources will appear as they are fetched…</div>
       </div>
     </div>
 
@@ -693,7 +704,7 @@
     <div class="flex items-start justify-between px-6 py-5 border-b" style="border-color:var(--border)">
       <div>
         <h2 class="font-semibold" style="color:var(--text)">Before we start</h2>
-        <p class="text-xs mt-0.5" style="color:var(--muted)">Answer any questions to sharpen the research focus — or skip to start immediately.</p>
+        <p class="text-xs mt-0.5" style="color:var(--muted)">Answer any questions to sharpen the research focus — or let the agent decide.</p>
       </div>
       <button id="clarify-close-btn" class="btn-ghost w-8 h-8 flex items-center justify-center text-lg ml-4">✕</button>
     </div>
@@ -701,30 +712,26 @@
       <div class="text-xs px-3 py-2 rounded-lg" style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);color:#a5b4fc">
         <span id="clarify-query-preview" class="font-medium italic"></span>
       </div>
-      <div class="space-y-1.5">
-        <label class="block text-xs font-medium" style="color:var(--text)">Scope — Any specific region, time period, or sector to focus on?</label>
-        <textarea id="clarify-q1" rows="2" placeholder="e.g. North America, last 5 years, renewable energy sector… (leave blank for broad coverage)"
-          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
+      <!-- Loading skeleton shown while LLM generates questions -->
+      <div id="clarify-skeleton" class="space-y-4">
+        <div class="skeleton-line h-3 w-3/4"></div>
+        <div class="skeleton-line h-14 w-full"></div>
+        <div class="skeleton-line h-3 w-2/3"></div>
+        <div class="skeleton-line h-14 w-full"></div>
+        <div class="skeleton-line h-3 w-4/5"></div>
+        <div class="skeleton-line h-14 w-full"></div>
+        <div class="skeleton-line h-3 w-3/5"></div>
+        <div class="skeleton-line h-14 w-full"></div>
       </div>
-      <div class="space-y-1.5">
-        <label class="block text-xs font-medium" style="color:var(--text)">Audience — Who is this research for?</label>
-        <textarea id="clarify-q2" rows="2" placeholder="e.g. general audience, domain experts, executives, students, policymakers…"
-          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
-      </div>
-      <div class="space-y-1.5">
-        <label class="block text-xs font-medium" style="color:var(--text)">Recency — How important is up-to-date information?</label>
-        <textarea id="clarify-q3" rows="2" placeholder="e.g. must be from the last 12 months, historical context equally valuable, latest breakthroughs only…"
-          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
-      </div>
-      <div class="space-y-1.5">
-        <label class="block text-xs font-medium" style="color:var(--text)">Depth — Any sub-topics to emphasise or avoid?</label>
-        <textarea id="clarify-q4" rows="2" placeholder="e.g. focus on economic impact, skip technical implementation details, include case studies…"
-          class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
-      </div>
+      <!-- Dynamic questions rendered after LLM responds -->
+      <div id="clarify-questions" class="hidden space-y-4"></div>
     </div>
-    <div class="px-6 py-4 border-t flex items-center justify-between" style="border-color:var(--border);background:var(--surface)">
-      <button id="clarify-skip-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid var(--border)">Skip — Start Now</button>
-      <button id="clarify-start-btn" class="btn-primary px-6 py-2 text-sm">Start Research →</button>
+    <div class="px-6 py-4 border-t flex items-center justify-between gap-2" style="border-color:var(--border);background:var(--surface)">
+      <button id="clarify-skip-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid var(--border)">Skip</button>
+      <div class="flex gap-2">
+        <button id="clarify-judgement-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid rgba(99,102,241,.4);color:#a5b4fc">Use Your Best Judgement</button>
+        <button id="clarify-start-btn" class="btn-primary px-6 py-2 text-sm">Start Research →</button>
+      </div>
     </div>
   </div>
 </div>
@@ -737,7 +744,7 @@ marked.setOptions({ breaks:true, gfm:true });
 const state = {
   jobId: null, es: null, stage: 0, activeAgent: '',
   activeReportFile: null, jobStartTime: null, elapsedTimer: null,
-  sourceMap: new Map(), noteCount: 0,
+  noteCount: 0,
 };
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -871,20 +878,22 @@ function handleStreamEvent(ev) {
       appendStreamRow('ev-search',
         `${ts(ev.ts)}<span style="color:#6366f1">  ↳</span> <span style="color:var(--muted)">${ev.count} result${ev.count!==1?'s':''} found</span>`
         + (items ? `<div style="margin-top:.2rem">${items}</div>` : ''));
-      (ev.results||[]).forEach(r => addSource(r.url, r.title, r.category, false));
+      (ev.results||[]).forEach(r => notebookAddSource(r.url, r.title, r.category, false));
       break;
     }
 
     case 'fetch': {
       appendStreamRow('ev-fetch',
         `${ts(ev.ts)}<span style="color:#38bdf8">↗</span> <span style="color:#7dd3fc;font-weight:500">Read:</span> <a href="${esc(ev.url)}" target="_blank" style="color:#818cf8;text-decoration:underline;word-break:break-all">${esc(ev.url)}</a> <span style="color:var(--subtle);font-size:.68rem">${esc(ev.category||'')}</span>`);
+      _lastFetchUrl = ev.url;
+      notebookAddSource(ev.url, ev.url, ev.category, false);
       break;
     }
 
     case 'fetch_content': {
       appendStreamRow('ev-content',
         `${ts(ev.ts)}<span style="color:#38bdf8">  │</span> <span style="color:var(--muted);font-style:italic">${esc((ev.preview||'').slice(0,300))}${(ev.preview||'').length>300?'…':''}</span>`);
-      addSource(ev.url, ev.url, ev.category, false);
+      notebookConfirmSource(ev.url, ev.category);
       break;
     }
 
@@ -907,7 +916,7 @@ function handleStreamEvent(ev) {
       state.noteCount++;
       appendStreamRow('ev-note',
         `${ts(ev.ts)}<span style="color:#6ee7b7;font-weight:500">✎ Note #${state.noteCount}:</span> <span style="color:var(--muted)">${esc((ev.content||'').slice(0,120))}${(ev.content||'').length>120?'…':''}</span>`);
-      addNoteEntry(ev.content || '');
+      notebookAddNote(ev.content || '');
       break;
     }
 
@@ -966,54 +975,118 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => activateTab(btn.dataset.tab));
 });
 
-function updatePlanPanel(content) {
-  $('tab-plan').innerHTML = `<div class="prose text-xs">${marked.parse(content)}</div>`;
-}
+// ── Plan Evolution ──────────────────────────────────────────────────────────
+let _planVersions = [];
 
-let _noteHtml = '';
-function addNoteEntry(content) {
-  _noteHtml = `<div class="rounded-lg p-3" style="background:var(--surface-3);border:1px solid var(--border)"><p class="text-xs leading-relaxed" style="color:#c8c8e0">${esc(content)}</p></div>` + _noteHtml;
-  $('tab-notes').innerHTML = _noteHtml || `<div class="text-xs italic" style="color:var(--subtle)">No notes yet.</div>`;
+function updatePlanPanel(content) {
+  const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  _planVersions.push({content, ts: now});
+
+  // Render plan — marked GFM renders "- [ ]" / "- [x]" as task list checkboxes
+  const rendered = marked.parse(content);
+  const versionInfo = _planVersions.length > 1
+    ? `<div class="flex items-center gap-1.5 mb-2 text-xs" style="color:var(--muted)">
+         <span style="background:rgba(99,102,241,.15);color:#a5b4fc;padding:1px 6px;border-radius:99px;font-weight:600">v${_planVersions.length}</span>
+         <span>updated ${now}</span>
+       </div>`
+    : '';
+  $('tab-plan').innerHTML = `${versionInfo}<div class="prose text-xs plan-checklist">${rendered}</div>`;
+
+  // Pulse the Plan tab button to signal the update
+  const planBtn = document.querySelector('[data-tab="plan"]');
+  if (planBtn) {
+    planBtn.classList.add('plan-pulse');
+    setTimeout(() => planBtn.classList.remove('plan-pulse'), 700);
+  }
 }
 
 function updateDraftPanel(content) {
   $('tab-draft').innerHTML = `<div class="prose text-xs">${marked.parse(content)}</div>`;
 }
 
-function addSource(url, title, category, confirmed) {
+// ── Research Notebook ───────────────────────────────────────────────────────
+let _notebookMap = new Map();  // url → {title, category, confirmed, notes:[]}
+let _lastFetchUrl = null;
+let _orphanNotes = [];
+
+function notebookAddSource(url, title, category, confirmed) {
   if (!url || url === 'N/A') return;
-  const existing = state.sourceMap.get(url);
-  if (existing && existing.confirmed) return;
-  state.sourceMap.set(url, {
-    title: title || url, category: category || '',
-    confirmed: confirmed || (existing && existing.confirmed) || false,
-  });
-  renderSourcesPanel();
+  const existing = _notebookMap.get(url);
+  if (existing) {
+    if (confirmed) existing.confirmed = true;
+    if (title && title !== url && existing.title === url) existing.title = title;
+    if (category && !existing.category) existing.category = category;
+  } else {
+    _notebookMap.set(url, {title: title || url, category: category || '', confirmed: !!confirmed, notes: []});
+  }
+  renderNotebook();
 }
 
-function renderSourcesPanel() {
-  const entries = [...state.sourceMap.entries()];
-  if (!entries.length) {
-    $('tab-sources').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">No sources yet.</div>`;
-    return;
+function notebookConfirmSource(url, category) {
+  const s = _notebookMap.get(url);
+  if (s) { s.confirmed = true; if (category && !s.category) s.category = category; }
+  else { _notebookMap.set(url, {title: url, category: category || '', confirmed: true, notes: []}); }
+  renderNotebook();
+}
+
+function notebookAddNote(content) {
+  if (_lastFetchUrl && _notebookMap.has(_lastFetchUrl)) {
+    _notebookMap.get(_lastFetchUrl).notes.push(content);
+  } else {
+    _orphanNotes.unshift(content);
   }
-  const html = entries.map(([url, s]) => {
-    const badgeCls = s.confirmed ? 'badge-confirmed' : 'badge-found';
-    const badgeText = s.confirmed ? '✓ Read' : '· Found';
+  renderNotebook();
+  activateTab('notebook');
+}
+
+function renderNotebook() {
+  const tab = $('tab-notebook');
+  if (!tab) return;
+  let html = '';
+
+  // Orphan field notes at top
+  for (const note of _orphanNotes) {
+    html += `<div class="rounded-lg p-3 mb-2 nb-orphan">
+      <div class="text-xs font-semibold mb-1" style="color:#6ee7b7">📝 Field Note</div>
+      <p class="text-xs leading-relaxed" style="color:#c8c8e0">${esc(note)}</p>
+    </div>`;
+  }
+
+  // Source cards — confirmed (read) first, then found
+  const allSrcs = [..._notebookMap.entries()];
+  const confirmed = allSrcs.filter(([,s]) => s.confirmed);
+  const found     = allSrcs.filter(([,s]) => !s.confirmed);
+
+  for (const [url, s] of [...confirmed, ...found]) {
+    const badgeCls  = s.confirmed ? 'badge-confirmed' : 'badge-found';
+    const badgeTxt  = s.confirmed ? '✓ Read' : '· Found';
     let catCls = 'badge-found';
-    if (s.category.includes('Academic'))    catCls = 'badge-academic';
-    else if (s.category.includes('Government')) catCls = 'badge-gov';
-    else if (s.category.includes('News'))   catCls = 'badge-news';
-    else if (s.category.includes('Social')) catCls = 'badge-social';
-    return `<div class="rounded-lg p-2.5" style="background:var(--surface-3);border:1px solid var(--border)">
+    const cat = s.category || '';
+    if (cat.includes('Academic')) catCls = 'badge-academic';
+    else if (cat.includes('Gov')) catCls = 'badge-gov';
+    else if (cat.includes('News')) catCls = 'badge-news';
+    else if (cat.includes('Social')) catCls = 'badge-social';
+
+    const notesHtml = s.notes.length
+      ? `<div class="mt-2 pt-2 space-y-1.5" style="border-top:1px solid var(--border)">
+           ${s.notes.map(n => `<p class="text-xs leading-relaxed" style="color:var(--muted)">${esc(n.length>220?n.slice(0,220)+'…':n)}</p>`).join('')}
+         </div>`
+      : '';
+
+    html += `<div class="rounded-lg p-2.5 mb-2" style="background:var(--surface-3);border:1px solid var(--border)">
       <div class="flex items-start gap-1.5 mb-1">
-        <span class="text-xs px-1.5 py-0.5 rounded font-medium ${badgeCls} shrink-0">${badgeText}</span>
-        ${s.category ? `<span class="text-xs px-1.5 py-0.5 rounded font-medium ${catCls} shrink-0">${esc(s.category)}</span>` : ''}
+        <span class="text-xs px-1.5 py-0.5 rounded font-medium ${badgeCls} shrink-0">${badgeTxt}</span>
+        ${cat ? `<span class="text-xs px-1.5 py-0.5 rounded font-medium ${catCls} shrink-0">${esc(cat)}</span>` : ''}
       </div>
       <a href="${esc(url)}" target="_blank" class="block text-xs break-all leading-tight" style="color:#818cf8;text-decoration:underline">${esc((s.title||url).slice(0,80))}</a>
+      ${notesHtml}
     </div>`;
-  }).join('');
-  $('tab-sources').innerHTML = html;
+  }
+
+  if (!html) {
+    html = `<div class="text-xs italic" style="color:var(--subtle)">Sources and notes will accumulate here as research progresses…</div>`;
+  }
+  tab.innerHTML = html;
 }
 
 // ── SSE streaming ───────────────────────────────────────────────────────────
@@ -1036,14 +1109,55 @@ function startStreaming(jobId) {
   };
 }
 
-// ── Start research ──────────────────────────────────────────────────────────
 // ── Clarify modal ─────────────────────────────────────────────────────────────
-function openClarifyModal(query) {
-  ['clarify-q1','clarify-q2','clarify-q3','clarify-q4'].forEach(id => $(id).value = '');
+let _clarifyQuestions = [];
+
+async function openClarifyModal(query) {
+  _clarifyQuestions = [];
   const preview = query.length > 90 ? query.slice(0, 90) + '…' : query;
   $('clarify-query-preview').textContent = preview;
+
+  // Show skeleton, hide rendered questions
+  $('clarify-skeleton').classList.remove('hidden');
+  $('clarify-questions').classList.add('hidden');
   $('clarify-modal').classList.remove('hidden');
+
+  // Fetch prompt-specific questions from the LLM
+  try {
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 7000);
+    const res  = await fetch('/api/clarify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({query}),
+      signal: ctrl.signal,
+    });
+    clearTimeout(tid);
+    if (res.ok) { const d = await res.json(); _clarifyQuestions = d.questions || []; }
+  } catch {}
+
+  // Fallback to static questions if LLM failed
+  if (!_clarifyQuestions.length) {
+    _clarifyQuestions = [
+      {question:'Scope — Any specific region, time period, or sector to focus on?', placeholder:'e.g. North America, last 5 years, renewable energy sector…'},
+      {question:'Audience — Who is this research for?', placeholder:'e.g. general audience, domain experts, executives, students…'},
+      {question:'Recency — How important is up-to-date information?', placeholder:'e.g. must be from the last 12 months, historical context equally valuable…'},
+      {question:'Depth — Any sub-topics to emphasise or avoid?', placeholder:'e.g. focus on economic impact, skip technical implementation details…'},
+    ];
+  }
+
+  // Render dynamic question fields
+  $('clarify-questions').innerHTML = _clarifyQuestions.map((q, i) => `
+    <div class="space-y-1.5">
+      <label class="block text-xs font-medium" style="color:var(--text)">${esc(q.question)}</label>
+      <textarea id="clarify-dq-${i}" rows="2" placeholder="${esc(q.placeholder||'')}"
+        class="field w-full px-3 py-2 text-sm resize-none" style="font-family:'Inter',sans-serif"></textarea>
+    </div>`).join('');
+
+  $('clarify-skeleton').classList.add('hidden');
+  $('clarify-questions').classList.remove('hidden');
 }
+
 function closeClarifyModal() { $('clarify-modal').classList.add('hidden'); }
 
 $('clarify-close-btn').addEventListener('click', closeClarifyModal);
@@ -1053,11 +1167,18 @@ $('clarify-skip-btn').addEventListener('click', () => {
   closeClarifyModal();
   startResearch('');
 });
+$('clarify-judgement-btn').addEventListener('click', () => {
+  closeClarifyModal();
+  startResearch("The user has not provided specific guidance. Use your best judgement on scope, depth, audience, and recency based on the nature of the query.");
+});
 $('clarify-start-btn').addEventListener('click', () => {
-  const labels = ['Scope', 'Audience', 'Recency', 'Depth'];
-  const parts = [1,2,3,4].map((n,i) => {
-    const v = $(`clarify-q${n}`).value.trim();
-    return v ? `${labels[i]}: ${v}` : null;
+  const parts = _clarifyQuestions.map((q, i) => {
+    const el = document.getElementById(`clarify-dq-${i}`);
+    const v  = el ? el.value.trim() : '';
+    if (!v) return null;
+    // Use the part before the first em-dash as a short label
+    const label = q.question.split('—')[0].trim().split(' ')[0];
+    return `${label}: ${v}`;
   }).filter(Boolean);
   closeClarifyModal();
   startResearch(parts.join('\n'));
@@ -1092,13 +1213,14 @@ async function startResearch(clarifications = '') {
   errorBanner.classList.add('hidden');
   reportCard.classList.add('hidden');
   $('artifacts-card').classList.add('hidden');
-  $('tab-plan').innerHTML   = `<div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>`;
-  $('tab-notes').innerHTML  = `<div class="text-xs italic" style="color:var(--subtle)">Notes will accumulate as sources are read…</div>`;
-  $('tab-draft').innerHTML  = `<div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here…</div>`;
-  $('tab-sources').innerHTML= `<div class="text-xs italic" style="color:var(--subtle)">Sources will appear as they are fetched…</div>`;
-  state.sourceMap.clear();
+  $('tab-plan').innerHTML     = `<div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>`;
+  $('tab-notebook').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">Sources and notes will accumulate here as research progresses…</div>`;
+  $('tab-draft').innerHTML    = `<div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here…</div>`;
+  _notebookMap.clear();
+  _lastFetchUrl = null;
+  _orphanNotes  = [];
+  _planVersions = [];
   state.noteCount = 0;
-  _noteHtml = '';
   setStage(0);
   streamCard.classList.remove('hidden');
   pipelineBar.classList.remove('hidden');

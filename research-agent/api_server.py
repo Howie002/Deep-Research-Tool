@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
+import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
@@ -178,6 +179,28 @@ class ReportSearchResponse(BaseModel):
     total_pages: int
 
 
+# ── Clarify ────────────────────────────────────────────────────────────────
+
+_STATIC_CLARIFY_QUESTIONS: list[dict] = [
+    {"question": "Scope — Any specific region, time period, or sector to focus on?",
+     "placeholder": "e.g. North America, last 5 years, renewable energy sector…"},
+    {"question": "Audience — Who is this research for?",
+     "placeholder": "e.g. general audience, domain experts, executives, students…"},
+    {"question": "Recency — How important is up-to-date information?",
+     "placeholder": "e.g. must be from the last 12 months, historical context equally valuable…"},
+    {"question": "Depth — Any sub-topics to emphasise or avoid?",
+     "placeholder": "e.g. focus on economic impact, skip technical implementation details…"},
+]
+
+
+class ClarifyRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=2000)
+
+
+class ClarifyResponse(BaseModel):
+    questions: list[dict]
+
+
 # ── Report index ───────────────────────────────────────────────────────────
 
 
@@ -320,6 +343,58 @@ async def cancel_job(job_id: str) -> CancelJobResponse:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to cancel job: {exc}")
     return CancelJobResponse(job_id=job_id, status="cancelled")
+
+
+@app.post("/api/clarify", response_model=ClarifyResponse)
+async def generate_clarify_questions(body: ClarifyRequest) -> ClarifyResponse:
+    """Generate 3–5 prompt-specific clarifying questions from the LLM."""
+    base_url = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
+    model = os.environ.get("LM_STUDIO_MODEL", "local-model")
+
+    system_prompt = (
+        "You are a research assistant helping refine a research brief. "
+        "Given a research request, generate exactly 4 clarifying questions that would most sharpen "
+        "the research scope and direction. Each question must be specific to this exact topic — "
+        "not generic. Return ONLY a valid JSON array with this exact structure: "
+        '[{"question": "Short label — one specific question?", "placeholder": "example answer hint…"}]. '
+        "No markdown fences, no explanation text, just the raw JSON array."
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                f"{base_url}/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f'Research request: "{body.query}"'},
+                    ],
+                    "temperature": 0.4,
+                    "max_tokens": 600,
+                },
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"].strip()
+            # Extract JSON array even if wrapped in markdown fences
+            match = re.search(r'\[.*\]', content, re.DOTALL)
+            if match:
+                questions = _json.loads(match.group(0))
+                if isinstance(questions, list) and questions:
+                    validated = [
+                        {
+                            "question": str(q.get("question", "")).strip(),
+                            "placeholder": str(q.get("placeholder", "")).strip(),
+                        }
+                        for q in questions[:5]
+                        if q.get("question")
+                    ]
+                    if validated:
+                        return ClarifyResponse(questions=validated)
+    except Exception:
+        pass
+
+    return ClarifyResponse(questions=_STATIC_CLARIFY_QUESTIONS)
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
