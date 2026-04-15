@@ -79,13 +79,13 @@ def main() -> None:
 
     try:
         log(f"Starting research pipeline for: \"{query}\"")
-        log("Stage 1/3 — Research Specialist: gathering sources from multiple angles", agent="Research Specialist")
+        log("Stage 1/4 — Research Specialist: gathering sources from multiple angles", agent="Research Specialist")
 
         def _instrumented_run(q, verbose=False, clarifications=""):
             # Import here to avoid circular issues; stages are logged via crew callbacks below
             from crewai import Crew, Task, Agent, Process, LLM
             from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
-            from tools import AddNoteTool, FetchPageTool, UpdateDraftTool, UpdatePlanTool, WebSearchTool
+            from tools import AddNoteTool, FetchPageTool, ThoughtNodeTool, UpdateDraftTool, UpdatePlanTool, WebSearchTool
             import litellm, re, os
 
             os.environ.setdefault("OPENAI_API_KEY", "lm-studio-local-no-key-needed")
@@ -157,6 +157,7 @@ def main() -> None:
             plan_tool     = UpdatePlanTool()
             note_tool     = AddNoteTool()
             draft_tool    = UpdateDraftTool()
+            thought_tool  = ThoughtNodeTool()
 
             _current_agent: list[str] = [""]  # mutable container for step_callback closure
             _stream_line_cursor: list[int] = [0]  # tracks stream file position between stages
@@ -188,6 +189,10 @@ def main() -> None:
                 "you are a ", "you excel at", "you are an expert",
                 "each finding must", "each claim", "each note must",
                 "write the final", "produce a clear", "review the research",
+                # gap analyst echoes
+                "step 1 — reflect", "step 2 — record", "step 3 — fill",
+                "step 4 — note", "step 5 — output",
+                "review all research", "identify and fill", "gap analysis report",
             )
 
             def _is_instruction_line(s: str) -> bool:
@@ -247,7 +252,7 @@ def main() -> None:
                         pass
                 types_seen = {ev.get("type") for ev in task_events}
 
-                if stage in (1, 2) and "note_add" not in types_seen:
+                if stage in (1, 2, 3) and "note_add" not in types_seen:
                     content = _extract_note(raw_text)
                     if content:
                         note_tool._run(content=content)
@@ -260,9 +265,9 @@ def main() -> None:
                         plan_tool._run(content=plan_content[:600])
                         log("Auto-extracted plan (LLM skipped update_plan)", agent=_current_agent[0])
 
-                # Only auto-extract draft from synthesizer (stage 3) — stage 1 raw
+                # Only auto-extract draft from synthesizer (stage 4) — earlier stage
                 # output is rarely a coherent draft and creates noise pages in exports.
-                if stage == 3 and "draft_update" not in types_seen:
+                if stage == 4 and "draft_update" not in types_seen:
                     content = _extract_note(raw_text)
                     if content and len(content) > 150:
                         draft_tool._run(content=content[:3000])
@@ -278,7 +283,7 @@ def main() -> None:
                 role="Research Specialist",
                 goal="Comprehensively gather information about '{query}' by searching the web from multiple angles and reading the most relevant pages.",
                 backstory="You are a senior research analyst with a talent for finding the most relevant, credible sources on any topic. You formulate diverse search queries, identify authoritative sources, and extract key facts with their URLs. You never rely on a single source.",
-                tools=[search_tool, fetch_tool, plan_tool, note_tool, draft_tool],
+                tools=[search_tool, fetch_tool, plan_tool, note_tool, draft_tool, thought_tool],
                 llm=llm, verbose=verbose, allow_delegation=False, max_iter=10, max_rpm=10,
             )
             analyst = Agent(
@@ -300,6 +305,19 @@ def main() -> None:
                 tools=[search_tool, fetch_tool, note_tool, draft_tool],
                 llm=llm, verbose=verbose, allow_delegation=False, max_iter=6, max_rpm=10,
             )
+            gap_analyst = Agent(
+                role="Gap Analyst",
+                goal="Identify what is still missing or unverified in the research and fill the most critical gaps with targeted follow-up.",
+                backstory=(
+                    "You are a thorough research editor who specialises in spotting holes in arguments. "
+                    "You read the research and analyst's output critically, identify the weakest points "
+                    "where evidence is thin, claims are UNVERIFIED, or important counter-perspectives "
+                    "are absent, and run targeted searches to fill exactly those gaps. "
+                    "You focus on the highest-impact gaps only — not exhaustive coverage."
+                ),
+                tools=[search_tool, fetch_tool, note_tool, thought_tool],
+                llm=llm, verbose=verbose, allow_delegation=False, max_iter=5, max_rpm=10,
+            )
             synthesizer = Agent(
                 role="Report Synthesizer",
                 goal="Produce a clear, well-structured, fully cited Markdown report that directly answers the research query.",
@@ -317,16 +335,25 @@ def main() -> None:
                 agent_role = getattr(output, "agent", "") or ""
                 if "Research Specialist" in agent_role:
                     _enforce_tool_calls(raw_text, stage=1)
-                    log("Stage 1/3 complete — handing off to Critical Analyst", agent="Research Specialist")
-                    log("Stage 2/3 — Critical Analyst: verifying key claims", agent="Critical Analyst")
+                    log("Stage 1/4 complete — handing off to Critical Analyst", agent="Research Specialist")
+                    log("Stage 2/4 — Critical Analyst: verifying key claims and flagging gaps", agent="Critical Analyst")
                     _current_agent[0] = "Critical Analyst"
+                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Critical Analyst", "stage": 2, "pass": 1})
                     _scratchpad.stream_event({"type": "agent_switch", "agent": "Critical Analyst", "stage": 2})
                 elif "Critical Analyst" in agent_role:
                     _enforce_tool_calls(raw_text, stage=2)
-                    log("Stage 2/3 complete — handing off to Report Synthesizer", agent="Critical Analyst")
-                    log("Stage 3/3 — Report Synthesizer: writing final report", agent="Report Synthesizer")
+                    log("Stage 2/4 complete — handing off to Gap Analyst", agent="Critical Analyst")
+                    log("Stage 3/4 — Gap Analyst: identifying and filling research gaps", agent="Gap Analyst")
+                    _current_agent[0] = "Gap Analyst"
+                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Gap Analyst", "stage": 3, "pass": 1})
+                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Gap Analyst", "stage": 3})
+                elif "Gap Analyst" in agent_role:
+                    _enforce_tool_calls(raw_text, stage=3)
+                    log("Stage 3/4 complete — handing off to Report Synthesizer", agent="Gap Analyst")
+                    log("Stage 4/4 — Report Synthesizer: writing final report", agent="Report Synthesizer")
                     _current_agent[0] = "Report Synthesizer"
-                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Report Synthesizer", "stage": 3})
+                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Report Synthesizer", "stage": 4, "pass": 1})
+                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Report Synthesizer", "stage": 4})
 
             def _step_callback(step_output):
                 """Stream each agent reasoning step to the UI."""
@@ -354,8 +381,11 @@ def main() -> None:
                     "You MUST use tools in this exact sequence — do not skip any step:\n\n"
                     "STEP 1 — PLAN (REQUIRED): Call update_plan immediately with a bullet-point "
                     "research strategy tailored to this specific query before doing anything else.\n\n"
-                    "STEP 2 — SEARCH: Run web_search at least FOUR times using different phrasings "
-                    "and angles. For each angle write a distinct query — do not repeat similar searches.\n\n"
+                    "STEP 2 — SEARCH WITH THOUGHT TRAIL: Before each new search angle, call "
+                    "record_thought with a short label describing what you are investigating "
+                    "(e.g. 'Investigating career background at Texas A&M' or 'Looking for funding sources'). "
+                    "Then run web_search at least FOUR times using different phrasings and angles. "
+                    "For each angle write a distinct query — do not repeat similar searches.\n\n"
                     "STEP 3 — FETCH: Call fetch_webpage on the 4–6 most promising URLs. "
                     "Prioritise [Academic], [Government], and [Non-profit/NGO] sources.\n\n"
                     "STEP 4 — NOTE (REQUIRED after EACH fetch): After every fetch_webpage call, "
@@ -401,6 +431,33 @@ def main() -> None:
                 ),
                 agent=analyst, context=[research_task],
             )
+            gap_task = Task(
+                description=(
+                    f"Review all research and verification done so far on: '{q}'\n{_CLARIF_BLOCK}\n"
+                    "Your job is to identify and fill the most critical gaps before the final report is written.\n\n"
+                    "STEP 1 — REFLECT: Review the research and analyst's findings. Ask yourself:\n"
+                    "  - What important questions remain unanswered?\n"
+                    "  - Which key claims are UNVERIFIED or CONTESTED and need more evidence?\n"
+                    "  - What counter-arguments or opposing viewpoints haven't been explored?\n"
+                    "  - What context is missing that would significantly strengthen the report?\n"
+                    "  Identify the top 2–3 gaps in priority order.\n\n"
+                    "STEP 2 — RECORD THOUGHTS (REQUIRED): Before each targeted search, call "
+                    "record_thought to narrate which gap you are addressing "
+                    "(e.g. 'Filling gap: no evidence on funding breakdown').\n\n"
+                    "STEP 3 — FILL: For the top 2–3 gaps, run targeted web_search queries, "
+                    "then fetch_webpage on the most relevant results. Be specific — target exactly what is missing.\n\n"
+                    "STEP 4 — NOTE (REQUIRED): After each new finding, call add_note including: "
+                    "which gap it addresses, what was found, and whether the gap is now resolved.\n\n"
+                    "STEP 5 — OUTPUT: Return a concise gap analysis report listing each gap identified, "
+                    "its resolution status (RESOLVED / PARTIALLY RESOLVED / STILL OPEN), "
+                    "and any remaining unknowns the synthesizer should acknowledge."
+                ),
+                expected_output=(
+                    "A gap analysis report listing each gap identified with its resolution status "
+                    "and key new findings. The add_note tool MUST have been called at least once."
+                ),
+                agent=gap_analyst, context=[research_task, verification_task],
+            )
             synthesis_task = Task(
                 description=(
                     f"Write the final research report answering: '{q}'\n{_CLARIF_BLOCK}\n"
@@ -415,6 +472,7 @@ def main() -> None:
                     "Rules for ALL content:\n"
                     "- Be factual and direct. Every claim must have a citation.\n"
                     "- If information is insufficient, say so clearly.\n"
+                    "- The gap analysis stage identified remaining unknowns — acknowledge these in Caveats.\n"
                     "- CITATION INTEGRITY: Only cite URLs that were explicitly returned by "
                     "web_search or fetch_webpage during this session. NEVER invent or guess URLs. "
                     "Write [source not retrieved] instead of fabricating a link."
@@ -424,16 +482,17 @@ def main() -> None:
                     "Analysis, Caveats, and a numbered Sources list. All cited URLs must have been "
                     "explicitly found during this session. The update_draft tool MUST have been called."
                 ),
-                agent=synthesizer, context=[research_task, verification_task],
+                agent=synthesizer, context=[research_task, verification_task, gap_task],
             )
 
-            # Emit the initial agent_switch event for the researcher
+            # Emit the initial agent_switch and iteration tick for the researcher
             _current_agent[0] = "Research Specialist"
+            _scratchpad.stream_event({"type": "iteration_tick", "agent": "Research Specialist", "stage": 1, "pass": 1})
             _scratchpad.stream_event({"type": "agent_switch", "agent": "Research Specialist", "stage": 1})
 
             crew = Crew(
-                agents=[researcher, analyst, synthesizer],
-                tasks=[research_task, verification_task, synthesis_task],
+                agents=[researcher, analyst, gap_analyst, synthesizer],
+                tasks=[research_task, verification_task, gap_task, synthesis_task],
                 process=Process.sequential,
                 verbose=verbose,
                 task_callback=_stage_callback,

@@ -147,6 +147,12 @@ def save_run(
         plan_updates  = 0
         draft_updates = 0
         agents_seen:  list[str] = []
+        # New artifact collections
+        thought_nodes: list[dict] = []
+        threads:  list[dict] = []
+        gap_notes: list[str] = []
+        _current_thread: dict | None = None
+        _current_stage: int = 1
 
         for ev in events:
             t = ev.get("type", "")
@@ -157,6 +163,10 @@ def save_run(
                 c = ev.get("content", "")
                 if c:
                     notes.append(c)
+                    if _current_thread is not None:
+                        _current_thread["note_count"] = _current_thread.get("note_count", 0) + 1
+                    if _current_stage == 3:
+                        gap_notes.append(c)
             elif t == "draft_update":
                 draft = ev.get("content", draft)
                 draft_updates += 1
@@ -164,6 +174,15 @@ def save_run(
                 q = ev.get("query", "")
                 if q:
                     search_queries.append(q)
+                    _current_thread = {
+                        "label":      q,
+                        "queries":    [q],
+                        "urls_fetched": [],
+                        "note_count": 0,
+                        "status":     "followed",
+                        "stage":      _current_stage,
+                    }
+                    threads.append(_current_thread)
             elif t == "search_result":
                 for r in ev.get("results", []):
                     url = r.get("url", "")
@@ -182,6 +201,8 @@ def save_run(
                         "category": ev.get("category", ""),
                         "confirmed": False,
                     })
+                    if _current_thread is not None:
+                        _current_thread["urls_fetched"].append(url)
             elif t == "fetch_content":
                 url = ev.get("url", "")
                 if url and url in sources:
@@ -190,8 +211,19 @@ def save_run(
                 step_count += 1
             elif t == "agent_switch":
                 agent = ev.get("agent", "")
+                _current_stage = ev.get("stage", _current_stage)
                 if agent and agent not in agents_seen:
                     agents_seen.append(agent)
+            elif t == "thought_node":
+                label = ev.get("label", "")
+                if label:
+                    thought_nodes.append({
+                        "id":       ev.get("id", ""),
+                        "label":    label,
+                        "rationale": ev.get("rationale", ""),
+                        "ts":       ev.get("ts", ""),
+                        "stage":    _current_stage,
+                    })
 
         # ── Run metadata ───────────────────────────────────────────────────
         completed_at    = datetime.now(timezone.utc).isoformat()
@@ -235,6 +267,9 @@ def save_run(
             "agents_seen":        agents_seen,
             "word_count":         len(result.split()),
             "report_file":        f"{prefix}.md",
+            "thought_count":      len(thought_nodes),
+            "thread_count":       len(threads),
+            "gap_count":          len(gap_notes),
         }
 
         # ── Write artifacts directory ──────────────────────────────────────
@@ -262,6 +297,19 @@ def save_run(
             (art_dir / "sources.json").write_text(
                 json.dumps(src_list, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+        if thought_nodes:
+            (art_dir / "thought_tree.json").write_text(
+                json.dumps(thought_nodes, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        if threads:
+            (art_dir / "threads.json").write_text(
+                json.dumps(threads, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        if gap_notes:
+            gap_md = "\n\n---\n\n".join(
+                f"## Gap Note {i + 1}\n{n}" for i, n in enumerate(gap_notes)
+            )
+            (art_dir / "gaps.md").write_text(gap_md, encoding="utf-8")
 
         return prefix
 

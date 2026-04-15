@@ -585,3 +585,38 @@ class UpdateDraftTool(BaseTool):
     def _run(self, content: str) -> str:
         _emit_stream({"type": "draft_update", "content": content})
         return "Draft updated."
+
+
+# ── Thought narration tool ─────────────────────────────────────────────────
+
+
+class _ThoughtInput(BaseModel):
+    label: str = Field(
+        description="Short phrase (5–15 words) describing the current research thread or insight being pursued."
+    )
+    rationale: str = Field(
+        default="",
+        description="One sentence explaining why you are pursuing this angle or what you just discovered.",
+    )
+
+
+class ThoughtNodeTool(BaseTool):
+    """Narrate reasoning pivots as they happen — builds a reasoning trail visible in the UI."""
+
+    name: str = "record_thought"
+    description: str = (
+        "Record your current reasoning thread — what you are investigating and why. "
+        "Call this before starting each new search angle, when you make a surprising discovery, "
+        "or when you pivot direction. Each call creates a labelled branch in the reasoning trail."
+    )
+    args_schema: Type[BaseModel] = _ThoughtInput
+
+    def _run(self, label: str, rationale: str = "") -> str:
+        import uuid
+        _emit_stream({
+            "type":      "thought_node",
+            "id":        str(uuid.uuid4())[:8],
+            "label":     label.strip(),
+            "rationale": rationale.strip(),
+        })
+        return "Thought recorded."

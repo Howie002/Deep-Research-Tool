@@ -1541,6 +1541,26 @@ async def report_audit(filename: str, limit: int = 500) -> dict:
     return {"events": events[-limit:], "total": len(events)}
 
 
+@app.get("/api/reports/{filename}/thoughts")
+async def report_thoughts(filename: str) -> dict:
+    """Return thought nodes (thought_tree.json) for a report."""
+    filename = Path(filename).name
+    f = _art_dir(filename) / "thought_tree.json"
+    if not f.exists():
+        raise HTTPException(status_code=404, detail="No thought tree captured for this run.")
+    return {"thoughts": _json.loads(f.read_text(encoding="utf-8"))}
+
+
+@app.get("/api/reports/{filename}/gaps")
+async def report_gaps(filename: str) -> dict:
+    """Return gap analysis notes (gaps.md) for a report."""
+    filename = Path(filename).name
+    f = _art_dir(filename) / "gaps.md"
+    if not f.exists():
+        raise HTTPException(status_code=404, detail="No gap analysis captured for this run.")
+    return {"content": f.read_text(encoding="utf-8")}
+
+
 def _build_research_tree(events: list[dict], query: str = "") -> dict:
     """Convert a flat list of audit stream events into a nested research tree."""
     root: dict = {"id": "root", "type": "query", "label": query or "Research Session", "children": []}
@@ -1548,10 +1568,12 @@ def _build_research_tree(events: list[dict], query: str = "") -> dict:
     url_to_node:       dict[str, dict] = {}
     url_to_fetch_node: dict[str, dict] = {}
     current_search:    dict | None     = None
+    current_thought:   dict | None     = None
     last_fetch_node:   dict | None     = None
-    note_idx   = 0
-    search_idx = 0
-    total      = 1
+    note_idx    = 0
+    search_idx  = 0
+    thought_idx = 0
+    total       = 1
 
     for ev in events:
         if total > 200:
@@ -1559,11 +1581,29 @@ def _build_research_tree(events: list[dict], query: str = "") -> dict:
             break
         t = ev.get("type", "")
 
-        if t == "search":
+        if t == "thought_node":
+            label = ev.get("label", "").strip()
+            if not label:
+                continue
+            node: dict = {
+                "id":       f"thought-{thought_idx}",
+                "type":     "thought",
+                "label":    label,
+                "rationale": ev.get("rationale", ""),
+                "children": [],
+            }
+            thought_idx += 1
+            total += 1
+            root["children"].append(node)
+            current_thought = node
+            current_search  = None
+            last_fetch_node = None
+
+        elif t == "search":
             q = ev.get("query", "")
             if not q:
                 continue
-            node: dict = {
+            node = {
                 "id": f"search-{search_idx}",
                 "type": "search",
                 "label": q,
@@ -1572,7 +1612,8 @@ def _build_research_tree(events: list[dict], query: str = "") -> dict:
             }
             search_idx += 1
             total += 1
-            root["children"].append(node)
+            # Attach to current thought node if present, else to root
+            (current_thought or root)["children"].append(node)
             current_search   = node
             last_fetch_node  = None
 

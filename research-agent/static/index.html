@@ -342,6 +342,10 @@
     </div>
     <div class="text-xs" style="color:var(--subtle)">→</div>
     <div id="stage-3" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium stage-pending">
+      <span class="stage-icon">○</span><span>Gap Analysis</span>
+    </div>
+    <div class="text-xs" style="color:var(--subtle)">→</div>
+    <div id="stage-4" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium stage-pending">
       <span class="stage-icon">○</span><span>Synthesis</span>
     </div>
     <div id="job-elapsed" class="ml-4 text-xs tabular-nums whitespace-nowrap" style="color:var(--muted)"></div>
@@ -399,7 +403,9 @@
             <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="draft">✏️ Draft</button>
             <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="sources">🔗 Sources</button>
             <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="audit">🪵 Audit</button>
-            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap" data-art="tree">🌿 Branch Map</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="tree">🌿 Branch Map</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="thoughts">🧠 Thoughts</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap" data-art="gaps">🔍 Gaps</button>
           </div>
           <div id="art-tab-plan"    class="art-tab-pane active p-4 prose prose-sm text-xs panel-scroll"></div>
           <div id="art-tab-notes"   class="art-tab-pane hidden p-4 space-y-2 panel-scroll"></div>
@@ -407,6 +413,8 @@
           <div id="art-tab-sources" class="art-tab-pane hidden p-4 space-y-2 panel-scroll"></div>
           <div id="art-tab-audit"   class="art-tab-pane hidden p-3 space-y-1 panel-scroll" style="font-family:'JetBrains Mono',monospace;font-size:.7rem"></div>
           <div id="art-tab-tree"    class="art-tab-pane hidden" style="height:460px;overflow:hidden;position:relative"></div>
+          <div id="art-tab-thoughts" class="art-tab-pane hidden p-4 space-y-3 panel-scroll"></div>
+          <div id="art-tab-gaps"    class="art-tab-pane hidden p-4 prose prose-sm text-xs panel-scroll"></div>
         </div>
       </div>
     </div>
@@ -769,6 +777,7 @@ const AGENTS = {
   'Research Specialist':             { chip:'chip-researcher', color:'#93c5fd', icon:'◈' },
   'Critical Analyst & Fact-Checker': { chip:'chip-analyst',   color:'#fdba74', icon:'◈' },
   'Critical Analyst':                { chip:'chip-analyst',   color:'#fdba74', icon:'◈' },
+  'Gap Analyst':                     { chip:'chip-system',    color:'#c4b5fd', icon:'◈' },
   'Report Synthesizer':              { chip:'chip-synth',     color:'#6ee7b7', icon:'◈' },
 };
 function agentCfg(name) {
@@ -795,11 +804,12 @@ async function checkHealth() {
 // ── Stage pipeline ──────────────────────────────────────────────────────────
 function setStage(n) {
   state.stage = n;
-  for (let i=1; i<=3; i++) {
+  for (let i=1; i<=4; i++) {
     const el = $(`stage-${i}`);
+    if (!el) continue;
     const icon = el.querySelector('.stage-icon');
     el.className = 'flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium ';
-    if (n===4||i<n)  { el.className+='stage-done';    icon.textContent='✓'; }
+    if (n===5||i<n)  { el.className+='stage-done';    icon.textContent='✓'; }
     else if (i===n)  { el.className+='stage-active';   icon.textContent='●'; }
     else             { el.className+='stage-pending';  icon.textContent='○'; }
   }
@@ -933,9 +943,10 @@ function handleStreamEvent(ev) {
       appendStreamRow(cls,
         `${ts(ev.ts||ev.time)}${ev.agent?agentChip(ev.agent):`<span style="color:var(--subtle)" class="mr-1">⚙</span>`}<span style="color:var(--muted)">${esc(ev.message)}</span>`);
       const msg = ev.message || '';
-      if (msg.includes('Stage 1/3') && !msg.includes('complete')) setStage(1);
-      if (msg.includes('Stage 2/3') && !msg.includes('complete')) setStage(2);
-      if (msg.includes('Stage 3/3') && !msg.includes('complete')) setStage(3);
+      if (msg.includes('Stage 1/4') && !msg.includes('complete')) setStage(1);
+      if (msg.includes('Stage 2/4') && !msg.includes('complete')) setStage(2);
+      if (msg.includes('Stage 3/4') && !msg.includes('complete')) setStage(3);
+      if (msg.includes('Stage 4/4') && !msg.includes('complete')) setStage(4);
       break;
     }
 
@@ -943,7 +954,7 @@ function handleStreamEvent(ev) {
       stopElapsed();
       activeAgentBadge.classList.add('hidden');
       if (ev.status === 'complete') {
-        setStage(4);
+        setStage(5);
         appendStreamRow('ev-done font-medium',
           `<span style="color:#34d399">✓ Pipeline complete — report ready.</span>`);
         if (ev.result) showReport(ev.result);
@@ -960,6 +971,21 @@ function handleStreamEvent(ev) {
         showJobError(ev.result || 'The pipeline encountered an error.');
       }
       setFormEnabled(true);
+      break;
+    }
+
+    case 'thought_node': {
+      if (!ev.label) break;
+      const rationale = ev.rationale ? ` <span style="color:var(--subtle);font-style:italic">${esc(ev.rationale)}</span>` : '';
+      appendStreamRow('ev-step',
+        `${ts(ev.ts)}<span style="color:#c084fc;font-weight:600">🧠 ${esc(ev.label)}</span>${rationale}`);
+      break;
+    }
+
+    case 'iteration_tick': {
+      const passLabel = ev.pass > 1 ? ` (pass ${ev.pass})` : '';
+      appendStreamRow('',
+        `${ts(ev.ts)}<span style="color:var(--subtle);font-size:.7rem">↺ Stage ${ev.stage} starting${passLabel}</span>`);
       break;
     }
   }
@@ -1489,7 +1515,7 @@ async function loadArtifacts(filename) {
   $('artifacts-body').classList.remove('hidden');
   $('artifacts-chevron').textContent = '▲';
   activateArtTab('plan');
-  ['plan','notes','draft','sources','audit'].forEach(t => {
+  ['plan','notes','draft','sources','audit','thoughts','gaps'].forEach(t => {
     $(`art-tab-${t}`).innerHTML = `<div class="text-xs italic p-2" style="color:var(--muted)">Loading…</div>`;
   });
   $('artifacts-stats').innerHTML = '';
@@ -1519,6 +1545,8 @@ async function loadArtifacts(filename) {
       { label:'Model',      value: (meta.model||'—').split('/').pop() },
       { label:'Agents',     value: fmt((meta.agents_seen||[]).length) },
       { label:'Sources',    value: fmt(meta.unique_url_count) },
+      { label:'Thoughts',   value: meta.thought_count != null ? fmt(meta.thought_count) : '—' },
+      { label:'Gaps Filled',value: meta.gap_count != null ? fmt(meta.gap_count) : '—' },
     ];
     $('artifacts-stats').innerHTML = stats.map(s =>
       `<div class="stat-cell">
@@ -1607,14 +1635,38 @@ async function loadArtifacts(filename) {
       return `<div class="rounded px-2 py-1 ${clsMap[t]||''}"><span style="color:var(--subtle)">[${esc(ev.ts||'')}]</span> <span style="color:var(--muted);font-weight:500">${esc(t)}</span> ${esc(ev.agent||ev.query||ev.url||ev.message||'')}${ev.content?` — ${esc(String(ev.content).slice(0,80))}`:''}  </div>`;
     }).join('');
   });
+
+  loadTab('thoughts', 'thoughts', d => {
+    const thoughts = d.thoughts || [];
+    if (!thoughts.length) { $('art-tab-thoughts').innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">No thought nodes recorded for this run.</div>`; return; }
+    $('art-tab-thoughts').innerHTML = thoughts.map((t, i) =>
+      `<div class="rounded-lg p-3" style="background:var(--surface-3);border:1px solid rgba(192,132,252,.3)">
+        <div class="flex items-start gap-2">
+          <span style="color:#c084fc;font-size:.85rem">🧠</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs font-semibold" style="color:#c4b5fd">${esc(t.label)}</div>
+            ${t.rationale ? `<div class="text-xs mt-0.5" style="color:var(--muted);font-style:italic">${esc(t.rationale)}</div>` : ''}
+            <div class="text-xs mt-1" style="color:var(--subtle)">Stage ${t.stage||'?'}</div>
+          </div>
+          <span class="text-xs shrink-0" style="color:var(--subtle)">#${i+1}</span>
+        </div>
+       </div>`
+    ).join('');
+  });
+
+  loadTab('gaps', 'gaps', d => {
+    $('art-tab-gaps').innerHTML = d.content
+      ? `<div class="prose text-xs">${marked.parse(d.content)}</div>`
+      : `<div class="text-xs italic" style="color:var(--muted)">No gap analysis was recorded for this run.</div>`;
+  });
 }
 
 // ── D3 Branch Map renderer ───────────────────────────────────────────────────
 const _NODE_COLORS = {
-  query: '#6366f1', search: '#38bdf8', url: '#34d399',
-  fetch: '#fbbf24', note: '#c084fc',
+  query: '#6366f1', thought: '#c084fc', search: '#38bdf8',
+  url: '#34d399', fetch: '#fbbf24', note: '#a78bfa',
 };
-const _NODE_RADIUS = { query:9, search:7, url:6, fetch:5, note:4 };
+const _NODE_RADIUS = { query:9, thought:8, search:7, url:6, fetch:5, note:4 };
 
 function renderD3Tree(treeData, containerId) {
   const container = $(containerId);
@@ -1681,6 +1733,7 @@ function renderD3Tree(treeData, containerId) {
       })
       .on('mouseover', (e, d) => {
         let html = `<span style="color:${_NODE_COLORS[d.data.type]||'#a5b4fc'}">${d.data.type.toUpperCase()}</span><br/>${esc(d.data.label)}`;
+        if (d.data.rationale) html += `<br/><span style="color:#a78bfa;font-style:italic">${esc(d.data.rationale)}</span>`;
         if (d.data.url) html += `<br/><span style="color:#6a6a90;word-break:break-all">${esc(d.data.url)}</span>`;
         if (d.data.content) html += `<br/><span style="color:#6a6a90">${esc(d.data.content.slice(0,150))}…</span>`;
         tip.style('display','block').html(html)

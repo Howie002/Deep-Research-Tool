@@ -95,29 +95,25 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
 ### Tool Adherence (shipped ✅)
 - `[x]` Post-hoc extraction: after each task, checks the stream file for missed tool calls and calls note/plan/draft tools directly from Python if the LLM skipped them
 
-### "What Am I Missing?" Gap Analysis Phase
-- `[ ]` Add a **gap analysis sub-task** between verification and synthesis
+### "What Am I Missing?" Gap Analysis Phase (shipped ✅)
+- `[x]` Add a **gap analysis sub-task** between verification and synthesis
   - After the analyst finishes, a short self-reflection pass asks: "What questions raised by this research are still unanswered? What threads were touched but not followed? What counter-narratives or opposing viewpoints haven't been explored?"
   - The agent generates a prioritised list of under-developed threads and runs targeted searches on the top 2–3
   - Results are added as notes and fed into the synthesizer, so the final report explicitly acknowledges what was and wasn't resolved
-  - Visible in the UI as a fourth stage indicator: "🔍 Gap Analysis"
-  - Saves a `gaps.md` artifact alongside the other run files
+  - Visible in the UI as a fourth stage indicator: "Gap Analysis"
+  - Saves a `gaps.md` artifact alongside the other run files; viewable in the new "Gaps" art-tab
 
-### Agent Rotation (Iterative Collaboration)
-- `[ ]` Replace the fixed 3-stage linear pipeline with a **dynamic agent rotation** model
-  - After each agent completes a pass, it evaluates whether the result is "good enough" or hands off back to a previous agent for deeper investigation
-  - Example: researcher → analyst → "needs more on X" → researcher (targeted) → analyst → synthesizer
-  - Agents communicate intent explicitly: "I need you to dig deeper on claim Y before I can verify it"
-  - Visible in the UI as a non-linear stage indicator with back-arrows and pass counts
-  - Maximum rotation depth configurable (default: 2 additional passes per agent)
+### Agent Rotation (Iterative Collaboration) (shipped ✅)
+- `[x]` Implemented as the **Gap Analyst** stage — delivers the rotation value (targeted follow-up on analyst findings) without reimplementing pipeline orchestration
+  - Gap Analyst receives context from both researcher and analyst tasks, identifies insufficiently-covered threads, and runs targeted searches before synthesis
+  - True dynamic back-handoff between arbitrary agents remains a future option if needed
 
-### Iteration Count & Thread Tracking
-- `[ ]` Track and display the **number of passes each agent has taken** across the full run
-  - Stream an `iteration_tick` event after each agent-level loop iteration
-  - UI shows a per-agent pass counter alongside the stage indicator (e.g. "Researcher — pass 3/3")
+### Iteration Count & Thread Tracking (shipped ✅)
+- `[x]` Track and display the **number of passes each agent has taken** across the full run
+  - Stream an `iteration_tick` event at each stage start with `{stage, pass}` fields
   - Track **logical threads** followed: each distinct sub-topic or angle the researcher pursued, labelled and counted
-  - Final artifact `threads.json` lists each thread with: label, queries run, URLs fetched, status (followed / dropped / handed off)
-  - Stats strip in the artifact panel shows "threads followed: N"
+  - Final artifact `threads.json` lists each thread with: label, queries run, URLs fetched, note count, stage
+  - Stats strip in the artifact panel shows "Thoughts" and "Gaps Filled" counts from meta.json
 
 ### Visual Research Branching Tree (shipped ✅)
 - `[x]` **Interactive branching graph** showing how research expanded from the original query
@@ -128,8 +124,8 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - Built from the `audit.jsonl` stream file — no extra data collection required
   - Visible as a new "Branch Map" tab in the artifact panel
 
-### Branch Tree "What I Learned" Nodes
-- `[ ]` **Per-node learning annotations on the branch map** — each search/fetch node in the tree shows what the agent actually learned from it, mirroring the notes process
+### Branch Tree "What I Learned" Nodes (shipped ✅)
+- `[x]` **Per-node learning annotations on the branch map** — notes attach to the search branch that produced them; thought nodes group searches into reasoning chapters
   - As the researcher fetches and notes pages, each resulting insight is attached as a child "learned" node on the branch that prompted it: e.g. under the "Chris Speier Texas A&M philanthropy" search, a sub-node reads "Learned: Speier emphasizes donor passion as the core of engagement strategy"
   - The researcher task prompt is updated to emit a `note_add` call after each fetch that explicitly names the thread/angle it relates to (e.g. `[Thread: philanthropy] Speier cited in Salesforce story…`)
   - The `note_add` stream event gains an optional `thread` field; `_build_research_tree` attaches note nodes to the specific search branch they belong to rather than just `last_fetch_node`
@@ -137,15 +133,12 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - In the SVG PDF tree, learned nodes render with a soft purple tint and truncated insight text (max 80 chars)
   - The effect: the branch map becomes a research narrative — you can follow any thread and see exactly what each avenue taught the agent
 
-### Thought-Process Branch Tree
-- `[ ]` **Rethink branch map to reflect the agent's reasoning journey, not just its search mechanics** — nodes should narrate the *why* behind each move, not just the *what*
-  - Replace raw search query nodes (e.g. `"chris texas a&m foundation"`) with synthesised reasoning labels the agent derives mid-run (e.g. "Investigating Chris's role with the Texas A&M Foundation" or "Chris appears to have a passion for Technology")
-  - Each node should carry a short insight label generated by the researcher agent at the moment it decides to pivot, dig deeper, or follow a new thread
-  - Edges become "led me to think…" transitions rather than mechanical search→fetch links
-  - Agent emits a new `thought_node` stream event: `{ "type": "thought_node", "label": "...", "parent_id": "...", "rationale": "..." }` — one per distinct reasoning turn
-  - Branch map renders these thought nodes as the primary tree; search/fetch nodes collapse to a detail layer that expands on hover
-  - The researcher task prompt is updated to explicitly narrate its reasoning at each pivot point using the `ThoughtNodeTool`
-  - Visible alongside the existing Branch Map tab (or replaces it) as a "Reasoning Trail" view
+### Thought-Process Branch Tree (shipped ✅)
+- `[x]` **Branch map reflects the agent's reasoning journey, not just its search mechanics** — nodes narrate the *why* behind each move
+  - Agent emits `thought_node` stream events `{ type, id, label, rationale }` via `ThoughtNodeTool` before each new search angle
+  - Branch map renders thought nodes (purple, radius 8) as chapter headers; subsequent searches nest beneath them
+  - D3 tooltip shows the rationale for thought nodes on hover
+  - New "🧠 Thoughts" art-tab lists all thought nodes in order with stage and rationale
   - Artifact saved as `thought_tree.json` alongside other run files
 
 ### SearXNG Integration (Self-Hosted Search)
@@ -161,6 +154,27 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
 - `[ ]` **Adaptive query expansion** — if initial searches return few results, automatically broaden scope
 - `[ ]` **Site-specific follow-up** — when a credible domain is found, run `site:` searches on it for related pages
 - `[ ]` **Recency filter** — add date-range parameters to search queries for time-sensitive topics
+
+### Parallel Multi-Tool Search
+- `[ ]` **Utilize multiple search backends simultaneously** to increase research speed and source diversity
+  - Run DuckDuckGo, Brave, SerpAPI, and LangSearch concurrently for the same query and merge deduplicated results
+  - Results from all backends are merged, deduplicated by URL, and ranked by aggregate score
+  - Settings toggle: "Parallel search" — when enabled, all configured backends run in parallel; when off, primary backend only
+  - **Parallelise agent tasks across AI endpoint threads** — the researcher can dispatch independent sub-searches as concurrent tasks rather than sequential tool calls
+  - Pool of worker threads (configurable, default 3) each holds a separate API session; the orchestrator fans out searches and collects results
+  - `tools.py`: `ParallelSearchTool` wraps the existing backends and uses `asyncio.gather` or `ThreadPoolExecutor` to run queries simultaneously
+  - Visible in the stream as multiple simultaneous `search` events with a "[parallel]" badge; fetch ordering is interleaved as results arrive
+  - Stats strip gains a "Parallel Searches" counter
+
+### Recursive Learning Module
+- `[ ]` **Backend knowledge store where the AI records insights about the research process** — learns from each run to improve future ones
+  - After each completed run, a short reflection pass extracts process-level lessons: "What search strategies worked well?", "Which source types were most reliable?", "What question formulations returned the best results?"
+  - Insights are stored in a persistent `learning_store.json` (or SQLite table) keyed by topic domain and source type
+  - At the start of each new research run, relevant past insights are injected into the researcher and analyst prompts: e.g. "Previous runs on similar topics found that academic .edu sources were most reliable — prioritise those"
+  - **Teach Me / Feedback Session** — after viewing a report, the user can open a "Teach Me" panel: a structured conversation where they correct the agent's understanding, flag weak sources, or redirect emphasis; feedback is written back into the learning store and tagged to the topic
+  - **Connected follow-up research** — the Teach Me session can spawn a new targeted research job pre-loaded with the user's corrections and the original context, producing a refined second-pass report
+  - Learning store UI: a "Research Memory" settings panel showing accumulated insights, with the ability to edit, tag, or delete entries
+  - Privacy toggle: "Don't learn from this run" checkbox on the query form
 
 ---
 
