@@ -133,6 +133,27 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - In the SVG PDF tree, learned nodes render with a soft purple tint and truncated insight text (max 80 chars)
   - The effect: the branch map becomes a research narrative — you can follow any thread and see exactly what each avenue taught the agent
 
+### Source Knowledge Mind Map
+- `[ ]` **A live cross-connected graph of every source, search, and claim discovered during a run** — goes beyond the linear branch tree into a true knowledge graph where sources reinforce, contradict, or link to each other
+  - **Node types:**
+    - 🔵 Search query — each distinct search angle
+    - 🟢 URL (stub) — every URL surfaced by any search, even unfetched
+    - 🟡 URL (enriched) — URLs that were fetched and read; richer node with content summary
+    - 🔴 Claim — a specific factual assertion extracted from enriched notes
+    - 🟣 Topic cluster — auto-grouped by keyword overlap across notes
+  - **Edge types:**
+    - `found via` — search → URL (which query surfaced this source)
+    - `corroborates` — URL → claim (when two sources assert the same fact)
+    - `contradicts` — URL → claim (conflicting evidence)
+    - `links to` — URL → URL (when a fetched page mentions another URL already in the graph)
+    - `shares topic` — URL → URL (when two sources appear in searches with overlapping keywords)
+  - The data is already there: stub and enriched notes carry `Found in search:` and content; cross-references can be extracted by scanning note content for URLs already in the graph, and by clustering notes with shared keywords
+  - Rendered as a **force-directed D3 graph** in a new "Mind Map" tab in the artifact panel — nodes repel, edges pull, clusters form naturally
+  - Clicking a node opens its note in a side drawer; clicking an edge explains the relationship
+  - Stub nodes (unfetched) appear faded — clicking one offers a "Fetch this source" button to enrich it on demand post-run
+  - The mind map persists as `mindmap.json` in the run artifact directory: `{ nodes: [{id, type, url, title, summary}], edges: [{from, to, relation}] }`
+  - **Cross-run mind map**: optionally merge mind maps from multiple runs on the same subject, revealing how the knowledge graph grows over successive research passes
+
 ### Thought-Process Branch Tree (shipped ✅)
 - `[x]` **Branch map reflects the agent's reasoning journey, not just its search mechanics** — nodes narrate the *why* behind each move
   - Agent emits `thought_node` stream events `{ type, id, label, rationale }` via `ThoughtNodeTool` before each new search angle
@@ -140,6 +161,23 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - D3 tooltip shows the rationale for thought nodes on hover
   - New "🧠 Thoughts" art-tab lists all thought nodes in order with stage and rationale
   - Artifact saved as `thought_tree.json` alongside other run files
+
+### Live Plan Checkbox Updates
+- `[ ]` **Plan panel checks off items in real time as the agent progresses** — the plan is already rendered with `[ ]` / `[x]` markers, but the UI does not visually reflect progress until the user manually refreshes or switches tabs; checkboxes should tick automatically as `update_plan` stream events arrive
+  - Stream listener detects an `update_plan` event mid-run and re-renders the Plan tab content immediately — no tab switch or page reload required
+  - `[x]` lines render as struck-through checked boxes with a subtle green tint; `[ ]` lines remain as open boxes
+  - A brief pulse animation on the Plan tab badge signals that a new checkoff occurred, so the user notices progress without watching the tab constantly
+  - Checked items accumulate a completion timestamp shown in muted text to the right: `✓ 14:32`
+  - Completion ratio (`n / total`) shown as a small progress bar beneath the Plan tab header
+
+### Plan as Executable Checklist
+- `[ ]` **Researcher writes the plan as an actionable checklist and checks items off throughout the run** — the current plan is a free-form text document written once and never updated; it should be a live task list the agent actively maintains
+  - Researcher writes plan steps as `- [ ] Do X` items (not prose bullets) — each step should be a discrete, checkable action: "[ ] Search for subject's professional background", "[ ] Find philanthropic history", "[ ] Verify employment details"
+  - As each step is completed, the researcher calls `update_plan` with the same content but the relevant `[ ]` replaced by `[x]` — one call per completed step, not a full rewrite
+  - The research task prompt is updated with an explicit instruction: *"Treat the plan as a live checklist. After completing each step, call update_plan to mark it `[x]`. Do not wait until the end — check off each item as you go."*
+  - The `create_plan` call at the start of a run must produce `- [ ]` prefixed items; if the agent writes prose instead, a post-hoc pass rewrites the bullet list with `[ ]` prefixes before the first `update_plan`
+  - The Plan panel already renders `[x]` as strikethrough (Live Plan Evolution shipped) — this item is about enforcing the agent behaviour so checkoffs actually happen, not adding new UI
+  - Plan completeness is tracked in `meta.json` as `plan_checked_ratio` (checked items / total items); the evaluator flags runs where this is below 0.5 as "plan not maintained"
 
 ### SearXNG Integration (Self-Hosted Search)
 - `[ ]` Bundle or auto-launch a **SearXNG** instance as an optional local search backend — zero API keys, zero rate limits, fully private
@@ -149,6 +187,14 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - Docker Compose snippet provided in README so users can spin up SearXNG with a single command alongside the research agent
   - Optional: detect a running SearXNG instance automatically during endpoint discovery (same scan that finds LM Studio / Ollama)
   - Optional: settings toggle to let SearXNG aggregate from specific engines (Google, Bing, Brave, etc.) without individual API keys
+
+### Headless Chromium Fetch (4th Fallback Strategy)
+- `[ ]` **Add Playwright headless Chromium as a 4th fetch fallback** — triggered only when trafilatura, requests+BeautifulSoup, and the Wayback Machine all return gated or empty content
+  - **When it helps:** JavaScript-rendered pages (React/Vue/Angular SPAs), sites that fingerprint for a real browser (Canvas, WebGL), true lazy-loaded content that only appears after scroll or delay
+  - **When it won't help:** Hard server-side paywalls (IEEE, ACM, Science) — the browser still hits the same login wall; LinkedIn actively detects and blocks headless browsers
+  - Implementation: `pip install playwright && playwright install chromium`; new `_fetch_with_playwright(url, limit)` helper in `tools.py` that launches a headless Chromium page, waits for `networkidle`, scrolls once to trigger lazy loads, then extracts `document.body.innerText`
+  - Only invoked as 4th strategy — not on every fetch — to avoid the 5–15 s launch overhead and heavy memory footprint
+  - Consider a per-domain allow-list (e.g. `.gov`, `.edu`, conference sites) to limit Playwright to domains where it's likely to add value
 
 ### Search Quality
 - `[ ]` **Adaptive query expansion** — if initial searches return few results, automatically broaden scope
@@ -166,8 +212,19 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - Visible in the stream as multiple simultaneous `search` events with a "[parallel]" badge; fetch ordering is interleaved as results arrive
   - Stats strip gains a "Parallel Searches" counter
 
-### Recursive Learning Module
-- `[ ]` **Backend knowledge store where the AI records insights about the research process** — learns from each run to improve future ones
+### Past-Run Knowledge Base (Embedded Research / RAG)
+- `[ ]` **Index past research artifacts so the agent can retrieve relevant content before hitting the web** — surfaces what we already know before spending search budget re-discovering it
+  - After each completed run, index the notes and draft into a local vector or keyword store keyed by run prefix and topic keywords
+  - At the start of a new run, query the index with the current research query and surface the top 3–5 most relevant passages as "Prior Knowledge" context injected into the researcher's prompt
+  - The researcher is instructed to treat prior knowledge as a starting point: verify currency, fill gaps, and supplement — not blindly repeat
+  - **Prior Knowledge panel** — a new workspace tab showing which past-run excerpts were surfaced, with source run links so the user can navigate to the original report
+  - Particularly valuable for iterative research on the same subject (e.g. multiple donor prospect runs) — avoids redundant web fetches and builds cumulative depth
+  - Storage: lightweight SQLite FTS (full-text search) index over `notes.md` + `draft.md` content from all past runs; no embeddings or GPU required
+  - `tools.py`: `PriorKnowledgeTool` — agent can explicitly query the index mid-run for a specific angle, not just at job start
+  - Privacy: excluded from indexing when "Don't learn from this run" is checked
+
+### Recursive Learning Module (shipped ✅)
+- `[x]` **Backend knowledge store where the AI records insights about the research process** — learns from each run to improve future ones
   - After each completed run, a short reflection pass extracts process-level lessons: "What search strategies worked well?", "Which source types were most reliable?", "What question formulations returned the best results?"
   - Insights are stored in a persistent `learning_store.json` (or SQLite table) keyed by topic domain and source type
   - At the start of each new research run, relevant past insights are injected into the researcher and analyst prompts: e.g. "Previous runs on similar topics found that academic .edu sources were most reliable — prioritise those"
@@ -214,6 +271,16 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - A second optional cover element: a "Research Snapshot" bar at the bottom of the cover showing 3-4 key stats (pages read, sources found, run time) as icon+number pairs
   - Cover generation is triggered as a separate step in `_build_export_html` — calls `_generate_cover_title(query, report_md)` which extracts or synthesises the title without an LLM call (regex on the first `## Summary` paragraph + simple heuristics)
   - If a proper title can't be extracted, falls back to a truncated and title-cased version of the query (max 12 words)
+
+### Research Homepage Dashboard
+- `[ ]` **A dedicated homepage that surfaces institutional knowledge and past activity** — replaces the blank query box with a knowledge-rich landing page
+  - **Lessons Learned panel** — surfaces the top insights from the learning store relevant to recent research, displayed as cards: what worked, what sources proved reliable, what query strategies paid off
+  - **Recommended Sites** — a curated, editable list of high-value domains the agent has learned to trust (e.g. SEC EDGAR, university gift registries, Bloomberg, Guidestar); shown as quick-access chips the researcher can reference when planning fetches
+  - Sites can be manually added/pinned by the user, or auto-suggested by the learning module when a domain appears reliably across multiple runs
+  - **Past Research Runs** — a browseable grid or list of previous jobs with: title, date, score grade, word count, top sources; clicking opens the full report view
+  - Filter/search past runs by keyword, date range, or grade
+  - A "Continue Research" button on each past run opens a pre-filled query box seeded with the original query and prior context, for iterative follow-up
+  - Homepage is the default route (`/`) when no active job is running; transitions to the live workspace when a job starts
 
 ---
 

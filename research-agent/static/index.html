@@ -358,6 +358,22 @@
   <!-- ── LEFT: Live Feed + Report ── -->
   <div class="flex-1 min-w-0 flex flex-col gap-4">
 
+    <!-- ── Dashboard (idle state) ── -->
+    <div id="dashboard-section" class="flex flex-col gap-4">
+      <!-- Stats row -->
+      <div id="dash-stats" class="grid grid-cols-3 gap-3"></div>
+      <!-- Recent reports grid -->
+      <div>
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Recent Reports</span>
+          <button id="dash-refresh-btn" class="btn-ghost text-xs px-2 py-1">↻ Refresh</button>
+        </div>
+        <div id="dash-reports-grid" class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">
+          <p class="text-xs py-6 text-center col-span-full" style="color:var(--muted)">Loading…</p>
+        </div>
+      </div>
+    </div>
+
     <!-- Live Stream -->
     <div id="stream-card" class="hidden card flex flex-col" style="min-height:500px">
       <div class="flex items-center justify-between px-4 py-3 border-b" style="border-color:var(--border)">
@@ -405,7 +421,8 @@
             <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="audit">🪵 Audit</button>
             <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="tree">🌿 Branch Map</button>
             <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="thoughts">🧠 Thoughts</button>
-            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap" data-art="gaps">🔍 Gaps</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap border-r" style="border-color:var(--border)" data-art="gaps">🔍 Gaps</button>
+            <button class="art-tab-btn px-4 py-2.5 whitespace-nowrap" data-art="mindmap">🕸️ Mind Map</button>
           </div>
           <div id="art-tab-plan"    class="art-tab-pane active p-4 prose prose-sm text-xs panel-scroll"></div>
           <div id="art-tab-notes"   class="art-tab-pane hidden p-4 space-y-2 panel-scroll"></div>
@@ -415,6 +432,7 @@
           <div id="art-tab-tree"    class="art-tab-pane hidden" style="height:460px;overflow:hidden;position:relative"></div>
           <div id="art-tab-thoughts" class="art-tab-pane hidden p-4 space-y-3 panel-scroll"></div>
           <div id="art-tab-gaps"    class="art-tab-pane hidden p-4 prose prose-sm text-xs panel-scroll"></div>
+          <div id="art-tab-mindmap" class="art-tab-pane hidden" style="height:460px;overflow:hidden;position:relative"></div>
         </div>
       </div>
     </div>
@@ -427,6 +445,9 @@
           <button id="export-pdf-btn" class="hidden btn-ghost text-xs px-2.5 py-1.5 flex items-center gap-1.5" style="border:1px solid var(--border)">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Export PDF
+          </button>
+          <button id="continue-research-btn" class="hidden btn-ghost text-xs px-2.5 py-1.5 flex items-center gap-1.5" style="border:1px solid rgba(99,102,241,.45);color:#a5b4fc">
+            ⟳ Continue Research
           </button>
           <button id="close-report-btn" class="btn-ghost text-xs px-2.5 py-1.5" style="border:1px solid var(--border)">✕ Close</button>
         </div>
@@ -441,10 +462,12 @@
 
     <!-- Workspace tabs -->
     <div class="card overflow-hidden">
-      <div class="flex border-b" style="background:var(--surface-2);border-color:var(--border)">
-        <button class="tab-btn active flex-1 text-xs font-medium px-3 py-3" data-tab="plan">Plan</button>
-        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="notebook">Notebook</button>
-        <button class="tab-btn flex-1 text-xs font-medium px-3 py-3 border-l" style="border-color:var(--border)" data-tab="draft">Draft</button>
+      <div class="flex border-b overflow-x-auto" style="background:var(--surface-2);border-color:var(--border)">
+        <button class="tab-btn active shrink-0 text-xs font-medium px-3 py-2.5" data-tab="plan">Plan</button>
+        <button class="tab-btn shrink-0 text-xs font-medium px-3 py-2.5 border-l" style="border-color:var(--border)" data-tab="notebook">Notebook</button>
+        <button class="tab-btn shrink-0 text-xs font-medium px-3 py-2.5 border-l" style="border-color:var(--border)" data-tab="draft">Draft</button>
+        <button class="tab-btn shrink-0 text-xs font-medium px-3 py-2.5 border-l" style="border-color:var(--border)" data-tab="thoughts">🧠 Thoughts</button>
+        <button class="tab-btn shrink-0 text-xs font-medium px-3 py-2.5 border-l" style="border-color:var(--border)" data-tab="livemap">🕸️ Map</button>
       </div>
       <div id="tab-plan" class="tab-pane active p-3.5 panel-scroll">
         <div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>
@@ -454,6 +477,12 @@
       </div>
       <div id="tab-draft" class="tab-pane p-3.5 panel-scroll">
         <div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here as research progresses…</div>
+      </div>
+      <div id="tab-thoughts" class="tab-pane p-3.5 space-y-2 panel-scroll">
+        <div class="text-xs italic" style="color:var(--subtle)">Thought nodes will appear here as the agent reasons through the research…</div>
+      </div>
+      <div id="tab-livemap" class="tab-pane" style="height:320px;overflow:hidden;position:relative">
+        <div class="text-xs italic p-4" style="color:var(--subtle)">Mind map will build here as research progresses…</div>
       </div>
     </div>
 
@@ -615,6 +644,17 @@
 
       <section>
         <div class="flex items-center justify-between mb-4">
+          <p class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Research Memory</p>
+          <span id="memory-count-badge" class="text-xs px-2 py-0.5 rounded-full font-medium" style="background:rgba(139,92,246,.15);color:#c4b5fd;border:1px solid rgba(139,92,246,.3)">0 insights</span>
+        </div>
+        <p class="text-xs mb-3" style="color:var(--subtle)">Lessons extracted from past runs — injected into future research on similar topics.</p>
+        <div id="memory-list" class="space-y-2">
+          <p class="text-xs italic" style="color:var(--subtle)">No insights stored yet. Complete a research run to start building memory.</p>
+        </div>
+      </section>
+
+      <section>
+        <div class="flex items-center justify-between mb-4">
           <p class="text-xs font-semibold uppercase tracking-widest" style="color:var(--muted)">Discover Endpoints</p>
           <button id="discover-btn" class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors" style="background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.3)">
             <span id="discover-btn-icon">🔍</span>
@@ -645,6 +685,51 @@
         <button id="settings-cancel-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid var(--border)">Cancel</button>
         <button id="settings-save-btn" class="btn-primary px-5 py-2 text-sm">Apply Settings</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════ CONTINUE RESEARCH MODAL ════════════════════════ -->
+<div id="continue-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.75);backdrop-filter:blur(8px)">
+  <div class="card-elevated w-full max-w-2xl flex flex-col shadow-2xl" style="max-height:88vh;box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+    <!-- Header -->
+    <div class="flex items-start justify-between px-6 py-5 border-b shrink-0" style="border-color:var(--border)">
+      <div>
+        <h2 class="font-semibold text-sm" style="color:var(--text)">Continue Research</h2>
+        <p class="text-xs mt-0.5" style="color:var(--muted)">Gap-fill branch from: <span id="continue-parent-query" class="italic" style="color:#a5b4fc"></span></p>
+      </div>
+      <button id="continue-modal-close" class="btn-ghost w-8 h-8 flex items-center justify-center text-lg shrink-0">✕</button>
+    </div>
+    <!-- Body -->
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <!-- Gaps to address -->
+      <div>
+        <label class="block text-xs font-semibold mb-1.5" style="color:var(--muted)">GAPS TO ADDRESS</label>
+        <p class="text-xs mb-2" style="color:var(--subtle)">Pre-filled from the Gap Analyst's findings. Edit to focus on the most important open questions, or add new ones.</p>
+        <textarea id="continue-gaps-text" rows="10"
+          class="field w-full px-3 py-2.5 text-xs leading-relaxed"
+          style="font-family:'JetBrains Mono',monospace;resize:vertical"
+          placeholder="Loading gap analysis…"></textarea>
+      </div>
+      <!-- Extra guidance -->
+      <div>
+        <label class="block text-xs font-semibold mb-1.5" style="color:var(--muted)">ADDITIONAL GUIDANCE <span class="font-normal" style="color:var(--subtle)">(optional)</span></label>
+        <textarea id="continue-extra-text" rows="3"
+          class="field w-full px-3 py-2.5 text-xs"
+          placeholder="e.g. Focus on peer-reviewed sources only. Prioritise recent studies from 2022–2025."></textarea>
+      </div>
+      <!-- Info callout -->
+      <div class="rounded-lg px-4 py-3 text-xs" style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);color:var(--muted)">
+        <span style="color:#a5b4fc;font-weight:600">How it works:</span>
+        The gap-fill run re-runs the full 4-stage pipeline, but the Research Specialist is directed exclusively toward the open gaps above. Sources already read in the original run are skipped so the agent focuses on genuinely new material.
+      </div>
+    </div>
+    <!-- Footer -->
+    <div class="flex items-center justify-end gap-2 px-6 py-4 border-t shrink-0" style="border-color:var(--border)">
+      <button id="continue-modal-cancel" class="btn-ghost text-xs px-3 py-1.5">Cancel</button>
+      <button id="continue-modal-confirm" class="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5">
+        ▶ Start Gap-Fill Research
+      </button>
     </div>
   </div>
 </div>
@@ -693,6 +778,10 @@
         <input type="checkbox" id="exp-tree"    class="accent-indigo-500 w-4 h-4">
         <span style="color:var(--text)">Branch Map</span>
       </label>
+      <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
+        <input type="checkbox" id="exp-mindmap" class="accent-indigo-500 w-4 h-4">
+        <span style="color:var(--text)">Mind Map</span>
+      </label>
     </div>
 
     <!-- Actions -->
@@ -733,6 +822,12 @@
       </div>
       <!-- Dynamic questions rendered after LLM responds -->
       <div id="clarify-questions" class="hidden space-y-4"></div>
+    </div>
+    <div class="px-6 pb-3 pt-1">
+      <label class="flex items-center gap-2 cursor-pointer select-none">
+        <input type="checkbox" id="clarify-no-learn" class="accent-purple-500 w-3.5 h-3.5">
+        <span class="text-xs" style="color:var(--subtle)">Don't learn from this run</span>
+      </label>
     </div>
     <div class="px-6 py-4 border-t flex items-center justify-between gap-2" style="border-color:var(--border);background:var(--surface)">
       <button id="clarify-skip-btn" class="btn-ghost px-4 py-2 text-sm" style="border:1px solid var(--border)">Skip</button>
@@ -878,6 +973,7 @@ function handleStreamEvent(ev) {
     case 'search': {
       appendStreamRow('ev-search',
         `${ts(ev.ts)}<span style="color:#a5b4fc">⌕</span> <span style="color:#818cf8;font-weight:500">Search:</span> <span style="color:#c4b5fd">${esc(ev.query)}</span>`);
+      _liveMMAddSearch(ev);
       break;
     }
 
@@ -889,6 +985,7 @@ function handleStreamEvent(ev) {
         `${ts(ev.ts)}<span style="color:#6366f1">  ↳</span> <span style="color:var(--muted)">${ev.count} result${ev.count!==1?'s':''} found</span>`
         + (items ? `<div style="margin-top:.2rem">${items}</div>` : ''));
       (ev.results||[]).forEach(r => notebookAddSource(r.url, r.title, r.category, false));
+      _liveMMAddResults(ev);
       break;
     }
 
@@ -897,6 +994,7 @@ function handleStreamEvent(ev) {
         `${ts(ev.ts)}<span style="color:#38bdf8">↗</span> <span style="color:#7dd3fc;font-weight:500">Read:</span> <a href="${esc(ev.url)}" target="_blank" style="color:#818cf8;text-decoration:underline;word-break:break-all">${esc(ev.url)}</a> <span style="color:var(--subtle);font-size:.68rem">${esc(ev.category||'')}</span>`);
       _lastFetchUrl = ev.url;
       notebookAddSource(ev.url, ev.url, ev.category, false);
+      _liveMMFetch(ev);
       break;
     }
 
@@ -927,6 +1025,7 @@ function handleStreamEvent(ev) {
       appendStreamRow('ev-note',
         `${ts(ev.ts)}<span style="color:#6ee7b7;font-weight:500">✎ Note #${state.noteCount}:</span> <span style="color:var(--muted)">${esc((ev.content||'').slice(0,120))}${(ev.content||'').length>120?'…':''}</span>`);
       notebookAddNote(ev.content || '');
+      _liveMMNote(ev);
       break;
     }
 
@@ -968,7 +1067,7 @@ function handleStreamEvent(ev) {
       } else {
         appendStreamRow('ev-error',
           `<span style="color:#f87171">✗ Pipeline failed: ${esc(ev.result||'Unknown error')}</span>`);
-        showJobError(ev.result || 'The pipeline encountered an error.');
+        showJobError(ev.result || 'The pipeline encountered an error.', state.jobId);
       }
       setFormEnabled(true);
       break;
@@ -979,6 +1078,8 @@ function handleStreamEvent(ev) {
       const rationale = ev.rationale ? ` <span style="color:var(--subtle);font-style:italic">${esc(ev.rationale)}</span>` : '';
       appendStreamRow('ev-step',
         `${ts(ev.ts)}<span style="color:#c084fc;font-weight:600">🧠 ${esc(ev.label)}</span>${rationale}`);
+      appendLiveThought(ev);
+      _liveMMAddThought(ev);
       break;
     }
 
@@ -999,7 +1100,13 @@ function activateTab(name) {
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+  btn.addEventListener('click', () => {
+    activateTab(btn.dataset.tab);
+    // Re-render live mind map on tab click so D3 gets the correct width
+    if (btn.dataset.tab === 'livemap' && _liveMM.nodes.length > 0) {
+      renderMindMap({ nodes: _liveMM.nodes, edges: _liveMM.edges }, 'tab-livemap');
+    }
+  });
 });
 
 // ── Plan Evolution ──────────────────────────────────────────────────────────
@@ -1073,9 +1180,13 @@ function renderNotebook() {
 
   // Orphan field notes at top
   for (const note of _orphanNotes) {
+    const relMatch = note.match(/\n?Relevance:\s*(.+?)$/si);
+    const body     = relMatch ? note.slice(0, relMatch.index).trim() : note;
+    const rel      = relMatch ? relMatch[1].trim() : '';
     html += `<div class="rounded-lg p-3 mb-2 nb-orphan">
       <div class="text-xs font-semibold mb-1" style="color:#6ee7b7">📝 Field Note</div>
-      <p class="text-xs leading-relaxed" style="color:#c8c8e0">${esc(note)}</p>
+      <p class="text-xs leading-relaxed" style="color:#c8c8e0">${esc(body.length>300?body.slice(0,300)+'…':body)}</p>
+      ${rel ? `<p class="text-xs leading-relaxed mt-1.5 px-2 py-1 rounded" style="background:rgba(139,92,246,.1);border-left:2px solid #c084fc;color:#c4b5fd"><span style="font-weight:600;color:#c084fc">◈ Relevance: </span>${esc(rel.length>200?rel.slice(0,200)+'…':rel)}</p>` : ''}
     </div>`;
   }
 
@@ -1095,8 +1206,16 @@ function renderNotebook() {
     else if (cat.includes('Social')) catCls = 'badge-social';
 
     const notesHtml = s.notes.length
-      ? `<div class="mt-2 pt-2 space-y-1.5" style="border-top:1px solid var(--border)">
-           ${s.notes.map(n => `<p class="text-xs leading-relaxed" style="color:var(--muted)">${esc(n.length>220?n.slice(0,220)+'…':n)}</p>`).join('')}
+      ? `<div class="mt-2 pt-2 space-y-2" style="border-top:1px solid var(--border)">
+           ${s.notes.map(n => {
+             // Split off a Relevance: line if the agent included one
+             const relMatch = n.match(/\n?Relevance:\s*(.+?)$/si);
+             const body     = relMatch ? n.slice(0, relMatch.index).trim() : n;
+             const rel      = relMatch ? relMatch[1].trim() : '';
+             const bodyHtml = body ? `<p class="text-xs leading-relaxed" style="color:var(--muted)">${esc(body.length>300?body.slice(0,300)+'…':body)}</p>` : '';
+             const relHtml  = rel  ? `<p class="text-xs leading-relaxed mt-1 px-2 py-1 rounded" style="background:rgba(139,92,246,.1);border-left:2px solid #c084fc;color:#c4b5fd"><span style="font-weight:600;color:#c084fc">◈ Relevance: </span>${esc(rel.length>200?rel.slice(0,200)+'…':rel)}</p>` : '';
+             return bodyHtml + relHtml;
+           }).join('')}
          </div>`
       : '';
 
@@ -1114,6 +1233,135 @@ function renderNotebook() {
     html = `<div class="text-xs italic" style="color:var(--subtle)">Sources and notes will accumulate here as research progresses…</div>`;
   }
   tab.innerHTML = html;
+}
+
+// ── Live Thoughts panel ──────────────────────────────────────────────────────
+let _liveThoughts = [];
+
+function appendLiveThought(ev) {
+  const isFirst = _liveThoughts.length === 0;
+  _liveThoughts.push(ev);
+  const pane = $('tab-thoughts');
+  if (!pane) return;
+  const placeholder = pane.querySelector('.italic');
+  if (placeholder) placeholder.remove();
+  if (isFirst) activateTab('thoughts');
+  const card = document.createElement('div');
+  card.className = 'rounded-lg p-2.5';
+  card.style.cssText = 'background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.2)';
+  card.innerHTML =
+    `<div class="flex items-start gap-2">
+       <span style="color:#c084fc;font-size:.95rem;line-height:1.3">🧠</span>
+       <div class="flex-1 min-w-0">
+         <div class="text-xs font-semibold leading-snug" style="color:#e4d4ff">${esc(ev.label)}</div>
+         ${ev.rationale ? `<div class="text-xs mt-1 leading-relaxed" style="color:#a78bfa;font-style:italic">${esc(ev.rationale)}</div>` : ''}
+         ${ev.ts ? `<div class="text-xs mt-1" style="color:var(--subtle)">${esc(ev.ts)}</div>` : ''}
+       </div>
+     </div>`;
+  pane.appendChild(card);
+  pane.scrollTop = pane.scrollHeight;
+  // Pulse the Thoughts tab to signal new thought
+  const thoughtBtn = document.querySelector('[data-tab="thoughts"]');
+  if (thoughtBtn) {
+    thoughtBtn.classList.add('plan-pulse');
+    setTimeout(() => thoughtBtn.classList.remove('plan-pulse'), 700);
+  }
+}
+
+// ── Live Mind Map engine ─────────────────────────────────────────────────────
+let _liveMM = { nodes:[], edges:[], _ids:new Set(), _queryId:null, _lastThoughtId:null, _lastSearchId:null, _urlNodes:{}, _searchNodes:{} };
+let _liveMM_timer = null;
+
+function _liveMMReset(query) {
+  _liveMM = { nodes:[], edges:[], _ids:new Set(), _queryId:null, _lastThoughtId:null, _lastSearchId:null, _urlNodes:{}, _searchNodes:{} };
+  if (query) {
+    const id = 'q0';
+    _liveMM.nodes.push({ id, label: query.length > 55 ? query.slice(0,55)+'…' : query, type: 'query', tooltip: query });
+    _liveMM._ids.add(id);
+    _liveMM._queryId = id;
+  }
+  _liveMMScheduleRender();
+}
+
+function _liveMMAddThought(ev) {
+  const id = `t${_liveMM.nodes.length}`;
+  const parent = _liveMM._lastThoughtId || _liveMM._queryId;
+  _liveMM.nodes.push({ id, label: ev.label, type: 'thought', tooltip: ev.rationale ? `${ev.label}\n\n${ev.rationale}` : ev.label });
+  _liveMM._ids.add(id);
+  if (parent) _liveMM.edges.push({ source: parent, target: id, relation: 'led_to' });
+  _liveMM._lastThoughtId = id;
+  _liveMM._lastSearchId  = null;
+  _liveMMScheduleRender();
+}
+
+function _liveMMAddSearch(ev) {
+  const id = `s${_liveMM.nodes.length}`;
+  const parent = _liveMM._lastThoughtId || _liveMM._queryId;
+  _liveMM.nodes.push({ id, label: ev.query, type: 'search', tooltip: `Query: ${ev.query}` });
+  _liveMM._ids.add(id);
+  if (parent) _liveMM.edges.push({ source: parent, target: id, relation: 'led_to' });
+  _liveMM._lastSearchId = id;
+  _liveMM._searchNodes[ev.query] = id;
+  _liveMMScheduleRender();
+}
+
+function _liveMMAddResults(ev) {
+  const searchId = _liveMM._lastSearchId || _liveMM._queryId;
+  for (const r of (ev.results || [])) {
+    const url = r.url || '';
+    if (!url) continue;
+    if (_liveMM._urlNodes[url]) {
+      // Already known — cross-link from this search
+      const existingId = _liveMM._urlNodes[url];
+      if (searchId && searchId !== existingId) {
+        const alreadyLinked = _liveMM.edges.some(e => e.source === searchId && e.target === existingId);
+        if (!alreadyLinked) _liveMM.edges.push({ source: searchId, target: existingId, relation: 'shares_topic' });
+      }
+      continue;
+    }
+    const id = `u${_liveMM.nodes.length}`;
+    const label = (r.title || url).slice(0, 48);
+    const snippet = r.snippet ? `\n\n${r.snippet.slice(0, 200)}` : '';
+    _liveMM.nodes.push({ id, label, type: 'stub', tooltip: `${r.title || url}\n${r.category || ''}\nFound via: "${ev.query}"${snippet}` });
+    _liveMM._ids.add(id);
+    _liveMM._urlNodes[url] = id;
+    if (searchId) _liveMM.edges.push({ source: searchId, target: id, relation: 'found_via' });
+  }
+  _liveMMScheduleRender();
+}
+
+function _liveMMFetch(ev) {
+  const nodeId = _liveMM._urlNodes[ev.url];
+  if (nodeId) {
+    const node = _liveMM.nodes.find(n => n.id === nodeId);
+    if (node && node.type === 'stub') node.type = 'enriched';
+  }
+  _liveMMScheduleRender();
+}
+
+function _liveMMNote(ev) {
+  const content = ev.content || '';
+  const urlMatch = content.match(/URL:\s*(\S+)/);
+  if (!urlMatch) return;
+  const nodeId = _liveMM._urlNodes[urlMatch[1]];
+  if (!nodeId) return;
+  const node = _liveMM.nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  node.type = 'enriched';
+  const factsMatch = content.match(/Key facts:\s*([\s\S]+?)(?:\nRelevance:|$)/i);
+  const facts = factsMatch ? factsMatch[1].trim().slice(0, 400) : content.slice(0, 400);
+  node.tooltip = `${node.label}\n\n${facts}`;
+  _liveMMScheduleRender();
+}
+
+function _liveMMScheduleRender() {
+  if (_liveMM_timer) clearTimeout(_liveMM_timer);
+  _liveMM_timer = setTimeout(() => {
+    const pane = $('tab-livemap');
+    if (!pane) return;
+    if (_liveMM.nodes.length === 0) return;
+    renderMindMap({ nodes: _liveMM.nodes, edges: _liveMM.edges }, 'tab-livemap');
+  }, 450);
 }
 
 // ── SSE streaming ───────────────────────────────────────────────────────────
@@ -1229,7 +1477,8 @@ queryInput.addEventListener('keydown', e => {
 });
 
 async function startResearch(clarifications = '') {
-  const query = queryInput.value.trim();
+  const query    = queryInput.value.trim();
+  const no_learn = $('clarify-no-learn') ? $('clarify-no-learn').checked : false;
   if (!query) {
     formError.textContent = 'Please enter a research question.';
     formError.classList.remove('hidden');
@@ -1243,12 +1492,17 @@ async function startResearch(clarifications = '') {
   $('tab-plan').innerHTML     = `<div class="text-xs italic" style="color:var(--subtle)">Plan will appear when the researcher starts…</div>`;
   $('tab-notebook').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">Sources and notes will accumulate here as research progresses…</div>`;
   $('tab-draft').innerHTML    = `<div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here…</div>`;
+  $('tab-thoughts').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">Thought nodes will appear here as the agent reasons through the research…</div>`;
+  $('tab-livemap').innerHTML  = `<div class="text-xs italic p-4" style="color:var(--subtle)">Mind map will build here as research progresses…</div>`;
   _notebookMap.clear();
   _lastFetchUrl = null;
   _orphanNotes  = [];
   _planVersions = [];
+  _liveThoughts = [];
+  _liveMMReset(query);
   state.noteCount = 0;
   setStage(0);
+  hideDashboard();
   streamCard.classList.remove('hidden');
   pipelineBar.classList.remove('hidden');
   workspace.classList.remove('hidden');
@@ -1258,7 +1512,7 @@ async function startResearch(clarifications = '') {
   try {
     const res = await fetch('/api/jobs', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({query, clarifications}),
+      body: JSON.stringify({query, clarifications, no_learn}),
     });
     if (!res.ok) {
       const err = await res.json().catch(()=>({detail:'Unknown error'}));
@@ -1347,11 +1601,75 @@ function showReport(markdown) {
   scrollTarget.scrollIntoView({behavior:'smooth', block:'start'});
   const hasFile = !!state.activeReportFile;
   $('export-pdf-btn').classList.toggle('hidden', !hasFile);
+  $('continue-research-btn').classList.toggle('hidden', !hasFile);
 }
 
-function showJobError(msg) {
-  errorBanner.textContent = `Error: ${msg}`;
+function showJobError(msg, jobId) {
+  let html = `<div>⚠ ${esc(msg)}</div>`;
+  if (jobId) {
+    html += `<div class="mt-2">
+      <button onclick="resumeJob('${esc(jobId)}')"
+        class="btn-ghost text-xs px-3 py-1.5 font-medium"
+        style="border:1px solid rgba(99,102,241,.5);color:#a5b4fc;background:rgba(99,102,241,.1)">
+        ▶ Resume Run — continue from where it left off
+      </button>
+    </div>`;
+  }
+  errorBanner.innerHTML = html;
   errorBanner.classList.remove('hidden');
+}
+
+async function resumeJob(jobId) {
+  if (!jobId) return;
+  try {
+    errorBanner.innerHTML = `<div style="color:#fcd34d">⟳ Resuming run — reading checkpoint…</div>`;
+
+    // POST to resume (strips old 'done' event from stream file on the backend)
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    // Fetch job metadata to get original query (for live mind-map centre node)
+    let resumeQuery = '';
+    try {
+      const jres = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+      if (jres.ok) { const jd = await jres.json(); resumeQuery = jd.query || ''; }
+    } catch {}
+
+    // Reset all local state so the stream replay repopulates a clean UI
+    _notebookMap.clear();
+    _lastFetchUrl  = null;
+    _orphanNotes   = [];
+    _planVersions  = [];
+    _liveThoughts  = [];
+    state.noteCount = 0;
+    _liveMMReset(resumeQuery || '…');
+    setStage(0);
+
+    // Transition UI to live-stream view
+    hideDashboard();
+    errorBanner.classList.add('hidden');
+    reportCard.classList.add('hidden');
+    $('artifacts-card').classList.add('hidden');
+    clearStream();
+    $('tab-plan').innerHTML      = `<div class="text-xs italic" style="color:var(--subtle)">Replaying checkpoint…</div>`;
+    $('tab-notebook').innerHTML  = `<div class="text-xs italic" style="color:var(--subtle)">Replaying sources from checkpoint…</div>`;
+    $('tab-draft').innerHTML     = `<div class="text-xs italic" style="color:var(--subtle)">Draft will appear here…</div>`;
+    $('tab-thoughts').innerHTML  = `<div class="text-xs italic" style="color:var(--subtle)">Resuming — prior thoughts will replay then new ones appear…</div>`;
+    $('tab-livemap').innerHTML   = `<div class="text-xs italic p-4" style="color:var(--subtle)">Rebuilding mind map from checkpoint…</div>`;
+    state.jobId = jobId;
+    setFormEnabled(false);
+    startElapsed();
+    workspace.classList.remove('hidden');
+    idleSidebar.classList.add('hidden');
+    streamCard.classList.remove('hidden');
+    pipelineBar.classList.remove('hidden');
+    startStreaming(jobId);
+  } catch(err) {
+    showJobError(`Resume failed: ${err.message}`);
+  }
 }
 
 $('close-report-btn').addEventListener('click', () => {
@@ -1359,13 +1677,16 @@ $('close-report-btn').addEventListener('click', () => {
   $('artifacts-card').classList.add('hidden');
   state.activeReportFile = null;
   $('export-pdf-btn').classList.add('hidden');
+  $('continue-research-btn').classList.add('hidden');
   renderReportsList(window._cachedReports||[], 'reports-list');
   renderReportsList(window._cachedReports||[], 'reports-list-idle');
+  // Return to dashboard if no active research
+  if (!state.jobId || !state.es) showDashboard();
 });
 
 // ── Export modal ─────────────────────────────────────────────────────────────
-const _EXP_KEYS  = ['plan','notes','sources','stats','tree'];
-const _EXP_IDS   = {plan:'exp-plan', notes:'exp-notes', sources:'exp-sources', stats:'exp-stats', tree:'exp-tree'};
+const _EXP_KEYS  = ['plan','notes','sources','stats','tree','mindmap'];
+const _EXP_IDS   = {plan:'exp-plan', notes:'exp-notes', sources:'exp-sources', stats:'exp-stats', tree:'exp-tree', mindmap:'exp-mindmap'};
 const _EXP_LS    = 'exportSections';
 
 function _expLoadPrefs() {
@@ -1401,6 +1722,105 @@ $('export-modal-close').addEventListener('click',  () => $('export-modal').class
 $('export-modal-cancel').addEventListener('click', () => $('export-modal').classList.add('hidden'));
 $('export-modal').addEventListener('click', e => { if (e.target === $('export-modal')) $('export-modal').classList.add('hidden'); });
 
+// ── Continue Research modal ───────────────────────────────────────────────────
+let _continueParentFilename = null;
+
+async function openContinueModal() {
+  const filename = state.activeReportFile;
+  if (!filename) return;
+  _continueParentFilename = filename;
+
+  // Show query in header
+  const cached = (window._cachedReports || []).find(r => r.filename === filename);
+  $('continue-parent-query').textContent = cached
+    ? (cached.query.length > 90 ? cached.query.slice(0, 90) + '…' : cached.query)
+    : filename;
+
+  $('continue-gaps-text').value = 'Loading gap analysis…';
+  $('continue-extra-text').value = '';
+  $('continue-modal').classList.remove('hidden');
+
+  try {
+    const res = await fetch(`/api/reports/${encodeURIComponent(filename)}/gaps`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    $('continue-gaps-text').value = d.content
+      ? d.content.replace(/^## Gap Note \d+\n/gm, '').trim()
+      : 'No gap analysis was recorded for this run.\n\nYou can still describe gaps manually in this field.';
+  } catch (err) {
+    $('continue-gaps-text').value = `Could not load gap analysis: ${err.message}`;
+  }
+}
+
+async function startGapFillResearch() {
+  const gapText  = ($('continue-gaps-text').value || '').trim();
+  const extraText = ($('continue-extra-text').value || '').trim();
+  if (!gapText) { alert('Please describe the gaps to investigate.'); return; }
+
+  const gapContext = extraText
+    ? `${gapText}\n\nAdditional guidance:\n${extraText}`
+    : gapText;
+
+  const cached = (window._cachedReports || []).find(r => r.filename === _continueParentFilename);
+  const queryText = cached ? cached.query : (_continueParentFilename || 'Research continuation');
+
+  try {
+    $('continue-modal').classList.add('hidden');
+    const res = await fetch('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: queryText,
+        clarifications: '',
+        no_learn: false,
+        parent_report: _continueParentFilename,
+        gap_context: gapContext,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+
+    // Transition UI to live stream (same flow as startResearch)
+    hideDashboard();
+    errorBanner.classList.add('hidden');
+    reportCard.classList.add('hidden');
+    $('artifacts-card').classList.add('hidden');
+    clearStream();
+    $('tab-plan').innerHTML     = `<div class="text-xs italic" style="color:var(--subtle)">Gap-fill plan will appear when research starts…</div>`;
+    $('tab-notebook').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">New sources and notes will accumulate here…</div>`;
+    $('tab-draft').innerHTML    = `<div class="text-xs italic" style="color:var(--subtle)">Working draft will appear here…</div>`;
+    $('tab-thoughts').innerHTML = `<div class="text-xs italic" style="color:var(--subtle)">Thought nodes will appear here…</div>`;
+    $('tab-livemap').innerHTML  = `<div class="text-xs italic p-4" style="color:var(--subtle)">Mind map will build here…</div>`;
+    _notebookMap.clear();
+    _lastFetchUrl = null;
+    _orphanNotes  = [];
+    _planVersions = [];
+    _liveThoughts = [];
+    state.noteCount = 0;
+    _liveMMReset(queryText);
+    setStage(0);
+    state.jobId = data.job_id;
+    setFormEnabled(false);
+    startElapsed();
+    workspace.classList.remove('hidden');
+    idleSidebar.classList.add('hidden');
+    streamCard.classList.remove('hidden');
+    pipelineBar.classList.remove('hidden');
+    startStreaming(data.job_id);
+  } catch (err) {
+    showJobError(`Failed to start gap-fill research: ${err.message}`);
+  }
+}
+
+$('continue-research-btn').addEventListener('click', openContinueModal);
+$('continue-modal-close').addEventListener('click',  () => $('continue-modal').classList.add('hidden'));
+$('continue-modal-cancel').addEventListener('click', () => $('continue-modal').classList.add('hidden'));
+$('continue-modal-confirm').addEventListener('click', startGapFillResearch);
+$('continue-modal').addEventListener('click', e => { if (e.target === $('continue-modal')) $('continue-modal').classList.add('hidden'); });
+
 $('export-preset-quick').addEventListener('click', () => _expSetAll(false));
 $('export-preset-full').addEventListener('click',  () => _expSetAll(true));
 
@@ -1422,6 +1842,52 @@ function setFormEnabled(enabled) {
   if (enabled) activeAgentBadge.classList.add('hidden');
 }
 
+// ── Dashboard ────────────────────────────────────────────────────────────────
+function showDashboard() { const d = $('dashboard-section'); if (d) d.classList.remove('hidden'); }
+function hideDashboard() { const d = $('dashboard-section'); if (d) d.classList.add('hidden'); }
+
+function renderDashboard(reports) {
+  // Stats strip
+  const now = Date.now();
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  const recentCount = reports.filter(r => {
+    try { return (now - new Date(r.created).getTime()) < weekMs; } catch { return false; }
+  }).length;
+  const dashStats = $('dash-stats');
+  if (dashStats) {
+    dashStats.innerHTML = [
+      ['Total Reports', reports.length, '#a5b4fc'],
+      ['This Week', recentCount, '#6ee7b7'],
+      ['Latest', reports[0] ? reports[0].created.split(' ')[0] : '—', '#fdba74'],
+    ].map(([label, value, color]) => `
+      <div class="card p-3 text-center">
+        <div class="text-lg font-bold tabular-nums" style="color:${color}">${value}</div>
+        <div class="text-xs mt-0.5" style="color:var(--muted)">${label}</div>
+      </div>`).join('');
+  }
+  // Report cards grid
+  const grid = $('dash-reports-grid');
+  if (!grid) return;
+  if (!reports.length) {
+    grid.innerHTML = `<div class="col-span-full text-center py-12">
+      <div class="text-3xl mb-3">🔬</div>
+      <p class="text-sm font-medium mb-1" style="color:var(--text)">No reports yet</p>
+      <p class="text-xs" style="color:var(--muted)">Run your first research query to get started.</p>
+    </div>`;
+    return;
+  }
+  grid.innerHTML = reports.slice(0, 12).map(r => {
+    const tags = (r.tags || []).map(t => `<span class="text-xs px-1.5 py-0.5 rounded" style="background:rgba(99,102,241,.18);color:#a5b4fc">${esc(t)}</span>`).join(' ');
+    return `<button class="card p-4 text-left hover:border-indigo-500/50 transition-colors" onclick="viewReport('${esc(r.filename)}')" style="border:1px solid var(--border)">
+      <p class="text-sm font-medium leading-snug mb-2 line-clamp-2" style="color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden" title="${esc(r.query)}">${esc(r.query)}</p>
+      <div class="flex items-center justify-between mt-auto">
+        <span class="text-xs" style="color:var(--muted)">${esc(r.created)}</span>
+        ${tags ? `<div class="flex gap-1 flex-wrap">${tags}</div>` : ''}
+      </div>
+    </button>`;
+  }).join('');
+}
+
 // ── Reports sidebar ──────────────────────────────────────────────────────────
 async function loadReports() {
   try {
@@ -1432,6 +1898,7 @@ async function loadReports() {
     window._cachedReports = reports;
     renderReportsList(reports, 'reports-list');
     renderReportsList(reports, 'reports-list-idle');
+    renderDashboard(reports);
   } catch {}
 }
 
@@ -1472,10 +1939,12 @@ async function viewReport(filename) {
 
 $('refresh-reports-btn').addEventListener('click', loadReports);
 $('refresh-reports-idle-btn').addEventListener('click', loadReports);
+$('dash-refresh-btn').addEventListener('click', loadReports);
 $('clear-stream-btn').addEventListener('click', () => { clearStream(); });
 
 // ── Artifact tabs ────────────────────────────────────────────────────────────
 let _treeLoaded = false;
+let _mindmapLoaded = false;
 document.querySelectorAll('.art-tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     activateArtTab(btn.dataset.art);
@@ -1486,6 +1955,15 @@ document.querySelectorAll('.art-tab-btn').forEach(btn => {
         .then(d => renderD3Tree(d.tree, 'art-tab-tree'))
         .catch(() => {
           $('art-tab-tree').innerHTML = `<div class="text-xs italic p-4" style="color:var(--muted)">No branch map available for this run (requires audit log).</div>`;
+        });
+    }
+    if (btn.dataset.art === 'mindmap' && state.activeReportFile && !_mindmapLoaded) {
+      _mindmapLoaded = true;
+      fetch(`/api/reports/${encodeURIComponent(state.activeReportFile)}/mindmap`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(d => renderMindMap(d.mindmap, 'art-tab-mindmap'))
+        .catch(() => {
+          $('art-tab-mindmap').innerHTML = `<div class="text-xs italic p-4" style="color:var(--muted)">No mind map available for this run.</div>`;
         });
     }
   });
@@ -1509,8 +1987,10 @@ $('artifacts-toggle').addEventListener('click', () => {
 const SEVERITY_ICON = { critical:'✗', warning:'⚠', info:'ℹ', good:'✓' };
 
 async function loadArtifacts(filename) {
-  _treeLoaded = false;  // reset so switching reports re-renders the tree
+  _treeLoaded = false;      // reset so switching reports re-renders the tree
+  _mindmapLoaded = false;   // reset so switching reports re-renders the mind map
   $('art-tab-tree').innerHTML = '';
+  $('art-tab-mindmap').innerHTML = '';
   const card = $('artifacts-card');
   card.classList.remove('hidden');
   $('artifacts-body').classList.remove('hidden');
@@ -1597,9 +2077,22 @@ async function loadArtifacts(filename) {
 
   loadTab('notes', 'notes', d => {
     if (!d.content) { $('art-tab-notes').innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">No notes were saved.</div>`; return; }
-    $('art-tab-notes').innerHTML = d.content.split('\n\n---\n\n').map(p =>
-      `<div class="rounded-lg p-3" style="background:var(--surface-3);border:1px solid var(--border)"><div class="prose text-xs">${marked.parse(p)}</div></div>`
-    ).join('');
+    const _gateRE = /sign[\s-]?in to (view|continue|access)|log[\s-]?in required|create an account|subscription required|already on linkedin|join linkedin|sign in to view.*full profile|gated\/paywalled page/i;
+    $('art-tab-notes').innerHTML = d.content.split('\n\n---\n\n').map(p => {
+      const isGated = _gateRE.test(p);
+      if (isGated) {
+        const urlMatch = p.match(/URL:\s*(https?:\/\/\S+)/);
+        const url = urlMatch ? urlMatch[1] : '';
+        return `<div class="rounded-lg p-3" style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25)">
+          <div class="flex items-center gap-2 mb-1.5">
+            <span class="text-xs font-semibold" style="color:#f87171">⚠ Gated / Login Wall</span>
+            ${url ? `<a href="${esc(url)}" target="_blank" class="text-xs truncate" style="color:#818cf8;text-decoration:underline;max-width:300px">${esc(url)}</a>` : ''}
+          </div>
+          <p class="text-xs" style="color:var(--muted)">This page required a login or subscription — no usable content was extracted. The agent noted it for completeness.</p>
+        </div>`;
+      }
+      return `<div class="rounded-lg p-3" style="background:var(--surface-3);border:1px solid var(--border)"><div class="prose text-xs">${marked.parse(p)}</div></div>`;
+    }).join('');
   });
 
   loadTab('draft', 'draft', d => {
@@ -1776,6 +2269,146 @@ function renderD3Tree(treeData, containerId) {
   });
 }
 
+// ── D3 Mind Map renderer (force-directed) ────────────────────────────────────
+const _MM_NODE_COLORS = {
+  query:    '#6366f1',  // indigo
+  thought:  '#c084fc',  // purple
+  search:   '#38bdf8',  // blue
+  stub:     '#6b7280',  // gray
+  enriched: '#34d399',  // green
+};
+const _MM_EDGE_COLORS = {
+  led_to:      '#a78bfa',  // purple
+  found_via:   '#38bdf8',  // blue
+  shares_topic:'#2dd4bf',  // teal
+};
+const _MM_NODE_RADIUS = { query:10, thought:8, search:7, stub:5, enriched:6 };
+
+function renderMindMap(data, containerId) {
+  const container = $(containerId);
+  container.innerHTML = '';
+  if (!data || !data.nodes || data.nodes.length === 0) {
+    container.innerHTML = `<div class="text-xs italic p-4" style="color:var(--muted)">No mind map data available for this run.</div>`;
+    return;
+  }
+
+  const W = container.offsetWidth || 760;
+  const H = 440;
+
+  const svg = d3.select(container).append('svg')
+    .attr('width', W).attr('height', H)
+    .style('background', 'var(--surface-2)');
+
+  // Arrow markers per edge type
+  const defs = svg.append('defs');
+  Object.entries(_MM_EDGE_COLORS).forEach(([rel, color]) => {
+    defs.append('marker')
+      .attr('id', `mm-arrow-${rel}`)
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 18).attr('refY', 0)
+      .attr('markerWidth', 6).attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', color);
+  });
+
+  const g = svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.1, 4]).on('zoom', e => g.attr('transform', e.transform)));
+
+  // Tooltip
+  const tip = d3.select(container).append('div')
+    .style('position','absolute').style('pointer-events','none')
+    .style('display','none').style('max-width','320px')
+    .style('background','#1e1e33').style('border','1px solid #2e2e4a')
+    .style('border-radius','8px').style('padding','8px 10px')
+    .style('font-size','11px').style('color','#e4e4f0').style('z-index','10')
+    .style('line-height','1.6').style('white-space','pre-wrap');
+
+  const nodes = data.nodes.map(d => ({...d}));
+  const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const links = data.edges.map(e => ({
+    source: nodeById[e.source] || e.source,
+    target: nodeById[e.target] || e.target,
+    relation: e.relation,
+  }));
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id)
+      .distance(d => d.relation === 'shares_topic' ? 130 : d.relation === 'found_via' ? 65 : 90)
+      .strength(0.6))
+    .force('charge', d3.forceManyBody().strength(-200))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(d => (_MM_NODE_RADIUS[d.type] || 5) + 10));
+
+  const link = g.append('g').selectAll('line')
+    .data(links).join('line')
+    .attr('stroke', d => _MM_EDGE_COLORS[d.relation] || '#2e2e4a')
+    .attr('stroke-width', d => d.relation === 'shares_topic' ? 1 : 1.5)
+    .attr('stroke-dasharray', d => d.relation === 'shares_topic' ? '4,3' : null)
+    .attr('stroke-opacity', 0.6)
+    .attr('marker-end', d => `url(#mm-arrow-${d.relation})`);
+
+  const node = g.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .style('cursor', 'grab')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag',  (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end',   (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+    )
+    .on('mouseover', (e, d) => {
+      let html = `<span style="color:${_MM_NODE_COLORS[d.type]||'#a5b4fc'};font-weight:600">${(d.type||'').toUpperCase()}</span>  <b>${esc(d.label)}</b>`;
+      if (d.tooltip) html += `\n\n${esc(d.tooltip)}`;
+      tip.style('display','block').html(html.replace(/\n/g,'<br/>'))
+        .style('left', (e.offsetX + 14) + 'px').style('top', (e.offsetY - 10) + 'px');
+    })
+    .on('mousemove', e => tip.style('left', (e.offsetX + 14) + 'px').style('top', (e.offsetY - 10) + 'px'))
+    .on('mouseout', () => tip.style('display','none'));
+
+  node.append('circle')
+    .attr('r', d => _MM_NODE_RADIUS[d.type] || 5)
+    .attr('fill', d => _MM_NODE_COLORS[d.type] || '#6366f1')
+    .attr('stroke', '#0b0b14').attr('stroke-width', 1.5);
+
+  node.append('text')
+    .attr('dy', d => -(_MM_NODE_RADIUS[d.type] || 5) - 3)
+    .attr('text-anchor', 'middle')
+    .style('font-size', d => d.type === 'query' ? '11px' : '9px')
+    .style('fill', '#c8c8e0')
+    .style('font-family', 'Inter,sans-serif')
+    .style('pointer-events', 'none')
+    .text(d => {
+      const max = d.type === 'query' ? 40 : d.type === 'search' ? 35 : 26;
+      return d.label.length > max ? d.label.slice(0, max) + '…' : d.label;
+    });
+
+  sim.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // Node type legend (top-left)
+  const nodeLeg = svg.append('g').attr('transform', 'translate(12,12)');
+  Object.entries(_MM_NODE_COLORS).forEach(([type, color], i) => {
+    nodeLeg.append('circle').attr('cx', 6).attr('cy', i * 16 + 5).attr('r', 5).attr('fill', color);
+    nodeLeg.append('text').attr('x', 16).attr('y', i * 16 + 9)
+      .style('font-size','10px').style('fill','#6a6a90').style('font-family','Inter,sans-serif')
+      .text(type);
+  });
+  // Edge type legend (below node legend)
+  const edgeLeg = svg.append('g').attr('transform', `translate(12,${Object.keys(_MM_NODE_COLORS).length * 16 + 22})`);
+  Object.entries(_MM_EDGE_COLORS).forEach(([rel, color], i) => {
+    edgeLeg.append('line').attr('x1',0).attr('y1', i*16+5).attr('x2',20).attr('y2', i*16+5)
+      .attr('stroke', color).attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', rel === 'shares_topic' ? '4,3' : null);
+    edgeLeg.append('text').attr('x',26).attr('y', i*16+9)
+      .style('font-size','10px').style('fill','#6a6a90').style('font-family','Inter,sans-serif')
+      .text(rel.replace(/_/g,' '));
+  });
+}
+
 // ── Settings modal ───────────────────────────────────────────────────────────
 const settingsModal      = $('settings-modal');
 const settingsUrl        = $('settings-url');
@@ -1929,6 +2562,60 @@ $('discover-btn').addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+// ── Research Memory ───────────────────────────────────────────────────────────
+
+async function loadMemory() {
+  const list = $('memory-list');
+  const badge = $('memory-count-badge');
+  if (!list) return;
+  try {
+    const r = await fetch('/api/memory');
+    if (!r.ok) throw new Error('Failed');
+    const data = await r.json();
+    const insights = data.insights || [];
+    badge.textContent = `${insights.length} insight${insights.length !== 1 ? 's' : ''}`;
+    if (!insights.length) {
+      list.innerHTML = '<p class="text-xs italic" style="color:var(--subtle)">No insights stored yet. Complete a research run to start building memory.</p>';
+      return;
+    }
+    list.innerHTML = insights.map(ins => {
+      const lessons = (ins.lessons || []).map(l => `<li style="margin-left:.75rem;list-style:disc;color:var(--muted)">${esc(l)}</li>`).join('');
+      const tags = (ins.tags || []).map(t => `<span class="text-xs px-1.5 py-0.5 rounded" style="background:rgba(99,102,241,.12);color:#a5b4fc">${esc(t)}</span>`).join(' ');
+      const kws = (ins.keywords || []).slice(0,5).join(', ');
+      const created = ins.created_at ? new Date(ins.created_at).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}) : '';
+      return `<div class="rounded-lg p-3 space-y-1.5" style="background:var(--surface-3);border:1px solid var(--border-2)" data-insight-id="${esc(ins.id)}">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex-1 min-w-0">
+            <span class="text-xs font-semibold" style="color:#c4b5fd">${esc(ins.topic_domain || 'General')}</span>
+            ${kws ? `<span class="text-xs ml-2" style="color:var(--subtle)">${esc(kws)}</span>` : ''}
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            ${created ? `<span class="text-xs" style="color:var(--subtle)">${esc(created)}</span>` : ''}
+            <button class="mem-del-btn btn-ghost w-6 h-6 flex items-center justify-center text-xs" data-id="${esc(ins.id)}" title="Delete insight" style="color:#f87171">✕</button>
+          </div>
+        </div>
+        <ul class="text-xs space-y-0.5">${lessons}</ul>
+        ${tags ? `<div class="flex gap-1 flex-wrap mt-1">${tags}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    list.querySelectorAll('.mem-del-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        if (!confirm('Delete this memory insight?')) return;
+        await fetch(`/api/memory/${id}`, {method:'DELETE'});
+        loadMemory();
+      });
+    });
+  } catch(_) {
+    list.innerHTML = '<p class="text-xs italic" style="color:var(--subtle)">Could not load memory.</p>';
+  }
+}
+
+// Load memory when settings modal opens
+const _origOpenSettings = typeof openSettings === 'function' ? openSettings : null;
+$('settings-btn').addEventListener('click', () => { loadMemory(); });
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 checkHealth();

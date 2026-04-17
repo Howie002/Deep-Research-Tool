@@ -17,6 +17,7 @@ import json
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 _job_file: Path | None = None
@@ -35,6 +36,63 @@ def _mark_failed(signum=None, frame=None) -> None:
             pass
     if signum is not None:
         sys.exit(1)
+
+
+def _read_checkpoint_from_stream(stream_file: Path) -> dict:
+    """
+    Parse an existing .stream file and reconstruct checkpoint state for resume.
+
+    Returns a dict with:
+      last_stage_completed  — highest stage number fully finished (0 = none)
+      stage_outputs         — {str(stage_num): output_text} from stage_complete events
+      fetched_urls          — list of URLs already fetched (to skip re-fetching)
+      notes                 — list of all note content strings
+      plan                  — latest plan content
+      draft                 — latest draft content
+    """
+    checkpoint: dict = {
+        "last_stage_completed": 0,
+        "stage_outputs": {},
+        "fetched_urls": [],
+        "notes": [],
+        "plan": "",
+        "draft": "",
+    }
+    if not stream_file.exists():
+        return checkpoint
+
+    for raw in stream_file.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ev = json.loads(raw)
+        except Exception:
+            continue
+        t = ev.get("type", "")
+        if t == "stage_complete":
+            stage = int(ev.get("stage", 0))
+            checkpoint["stage_outputs"][str(stage)] = ev.get("output", "")
+            if stage > checkpoint["last_stage_completed"]:
+                checkpoint["last_stage_completed"] = stage
+        elif t == "fetch":
+            url = ev.get("url", "")
+            if url and url not in checkpoint["fetched_urls"]:
+                checkpoint["fetched_urls"].append(url)
+        elif t == "note_add":
+            c = ev.get("content", "")
+            if c:
+                checkpoint["notes"].append(c)
+        elif t == "plan_update":
+            c = ev.get("content", "")
+            if c:
+                checkpoint["plan"] = c
+        elif t == "draft_update":
+            c = ev.get("content", "")
+            if c:
+                checkpoint["draft"] = c
+
+    return checkpoint
 
 
 def main() -> None:
@@ -63,6 +121,9 @@ def main() -> None:
         data = json.loads(job_file.read_text(encoding="utf-8"))
         query = data["query"]
         clarifications = data.get("clarifications", "")
+        no_learn = data.get("no_learn", False)
+        _parent_report = data.get("parent_report", "")
+        _gap_context   = data.get("gap_context", "")
     except Exception as exc:
         job_file.write_text(
             json.dumps({"status": "error", "query": "", "log": [], "result": f"Failed to read job file: {exc}"}),
@@ -78,14 +139,22 @@ def main() -> None:
     _tools_module.set_stream_emitter(_scratchpad.stream_event)
 
     try:
+        # Load relevant past insights from the learning store (if any)
+        from pathlib import Path as _Path
+        import learning_store as _ls
+        _store_path = _Path(__file__).parent / "learning_store.json"
+        _memory_insights: list[dict] = [] if no_learn else _ls.get_relevant_insights(query, _store_path)
+
         log(f"Starting research pipeline for: \"{query}\"")
+        if _memory_insights:
+            log(f"Research Memory: {len(_memory_insights)} relevant insight(s) loaded from past runs", agent="Research Specialist")
         log("Stage 1/4 — Research Specialist: gathering sources from multiple angles", agent="Research Specialist")
 
-        def _instrumented_run(q, verbose=False, clarifications=""):
+        def _instrumented_run(q, verbose=False, clarifications="", memory_insights=None, checkpoint=None, gap_context=None, parent_sources=None):
             # Import here to avoid circular issues; stages are logged via crew callbacks below
             from crewai import Crew, Task, Agent, Process, LLM
             from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
-            from tools import AddNoteTool, FetchPageTool, ThoughtNodeTool, UpdateDraftTool, UpdatePlanTool, WebSearchTool
+            from tools import AddNoteTool, FetchPageTool, ThoughtNodeTool, UpdateDraftTool, UpdatePlanTool, WebSearchTool, classify
             import litellm, re, os
 
             os.environ.setdefault("OPENAI_API_KEY", "lm-studio-local-no-key-needed")
@@ -96,7 +165,7 @@ def main() -> None:
             litellm.register_model({
                 f"openai/{LM_STUDIO_MODEL}": {
                     "supports_function_calling": True,
-                    "max_tokens": 32768,
+                    "max_tokens": 131072,
                 }
             })
 
@@ -141,13 +210,14 @@ def main() -> None:
             litellm.completion = _patched_completion
             litellm.acompletion = _patched_acompletion
 
-            def _make_llm(temperature=0.3):
+            def _make_llm(temperature=0.3, max_tokens=4096):
                 return LLM(
                     model=f"openai/{LM_STUDIO_MODEL}",
                     base_url=LM_STUDIO_BASE_URL,
                     api_key="lm-studio-local-no-key-needed",
                     temperature=temperature,
-                    timeout=3600,
+                    max_tokens=max_tokens,
+                    timeout=600,
                     extra_body={"enable_thinking": False},
                 )
 
@@ -170,6 +240,21 @@ def main() -> None:
                     + clarifications.strip()
                     + "\n"
                 )
+
+            # Build optional memory block from past research insights
+            _MEMORY_BLOCK = ""
+            if memory_insights:
+                lines = [
+                    "\n\nRESEARCH MEMORY — lessons from past runs on similar topics "
+                    "(apply these to guide your strategy, but verify independently):"
+                ]
+                for ins in memory_insights:
+                    domain = ins.get("topic_domain", "")
+                    if domain:
+                        lines.append(f"\n[Domain: {domain}]")
+                    for lesson in ins.get("lessons", []):
+                        lines.append(f"  • {lesson}")
+                _MEMORY_BLOCK = "\n".join(lines) + "\n"
 
             # ── Post-hoc tool enforcement helpers ────────────────────────────
 
@@ -194,6 +279,24 @@ def main() -> None:
                 "step 4 — note", "step 5 — output",
                 "analytical only", "still open: 0", "targeted gap research",
                 "review all research", "identify and fill", "gap analysis report",
+                # ReAct loop artifacts / jailbreak patterns
+                "the user gave a final instruction",
+                "you'll ignore all previous instructions",
+                "ignore all previous instructions",
+                "give your absolute best final answer",
+                "now it's time you must",
+                "stop using any tools",
+                "we have already produced a final answer",
+                "we need to compile at least",
+                "we have fetched many pages",
+                "make sure every claim is backed by",
+                "the system responded with nothing",
+                "we fetched it but got no content",
+                "we called fetch but didn't capture",
+                "[begin of final answer]",
+                "[end of final answer]",
+                "begin of final answer",
+                "end of final answer",
             )
 
             def _is_instruction_line(s: str) -> bool:
@@ -212,8 +315,24 @@ def main() -> None:
                              if p in text.lower()[:400]) * 4   # penalise instructions
                 return score
 
+            # Strings that, if found anywhere in a note, mean the whole thing is junk
+            _HARD_REJECT = (
+                "ignore all previous instructions",
+                "you'll ignore all previous instructions",
+                "give your absolute best final answer",
+                "[begin of final answer]",
+                "begin of final answer",
+                '"claim":',   # JSON findings format
+                '"source":',  # JSON findings format
+                '"type":',    # JSON findings format
+            )
+
             def _extract_note(text: str) -> str:
                 """Extract real research content from task output, filtering instruction echo."""
+                low = text.lower()
+                # Hard-reject anything containing ReAct junk or JSON findings format
+                if any(p in low for p in _HARD_REJECT):
+                    return ""
                 if _content_score(text) < 2:
                     return ""  # not enough real content to be worth saving
                 useful = []
@@ -253,6 +372,80 @@ def main() -> None:
                         pass
                 types_seen = {ev.get("type") for ev in task_events}
 
+                # ── Stub + enrich: every search result URL becomes a note;
+                #    top 2-3 per search are fetched and their notes enriched. ──
+                if stage in (1, 2):
+                    _cat_priority = {"[Academic]": 0, "[Government]": 1, "[Non-profit/NGO]": 2, "[News]": 3}
+                    fetched_ever: set[str] = {ev.get("url") for ev in task_events if ev.get("type") == "fetch"}
+                    globally_fetched: set[str] = set(fetched_ever)
+                    stub_noted: set[str] = set()  # URLs already given a stub note
+
+                    for ev in task_events:
+                        if ev.get("type") != "search_result":
+                            continue
+                        results = ev.get("results", [])
+                        if not results:
+                            continue
+                        query_label = ev.get("query", "")
+
+                        # Decide which URLs to fetch (top 2 by category, not yet fetched)
+                        sorted_results = sorted(results, key=lambda r: _cat_priority.get(r.get("category", ""), 9))
+                        to_fetch_urls: set[str] = set()
+                        count = 0
+                        for r in sorted_results:
+                            url = r.get("url", "")
+                            if url and url not in globally_fetched and count < 2:
+                                to_fetch_urls.add(url)
+                                count += 1
+
+                        # Create a stub note for every URL in this search
+                        for r in results:
+                            url = r.get("url", "")
+                            if not url or url in stub_noted:
+                                continue
+                            stub_noted.add(url)
+                            title = r.get("title", "No title")
+                            cat = r.get("category", "")
+                            snippet = r.get("snippet", "")
+
+                            if url in to_fetch_urls:
+                                # Fetch and write enriched note
+                                globally_fetched.add(url)
+                                try:
+                                    content = fetch_tool._run(url=url)
+                                    if content and len(content) > 200 and "Already fetched" not in content:
+                                        note_tool._run(content=(
+                                            f"URL: {url}\n"
+                                            f"Title: {title}\n"
+                                            f"Source type: {cat}\n"
+                                            f"Found in search: '{query_label}'\n"
+                                            f"Key facts: {content[:1800]}\n"
+                                            f"Relevance: Fetched and read — contains primary content."
+                                        ))
+                                        log(f"Auto-fetched + enriched: {url}", agent=_current_agent[0])
+                                    else:
+                                        # Fetch failed — fall back to stub
+                                        note_tool._run(content=(
+                                            f"URL: {url}\n"
+                                            f"Title: {title}\n"
+                                            f"Source type: {cat}\n"
+                                            f"Found in search: '{query_label}'\n"
+                                            f"Snippet: {snippet}\n"
+                                            f"Status: Fetch attempted but returned no content."
+                                        ))
+                                except Exception:
+                                    pass
+                            else:
+                                # Stub note only — URL found but not fetched
+                                note_tool._run(content=(
+                                    f"URL: {url}\n"
+                                    f"Title: {title}\n"
+                                    f"Source type: {cat}\n"
+                                    f"Found in search: '{query_label}'\n"
+                                    f"Snippet: {snippet}\n"
+                                    f"Status: Found — not fetched."
+                                ))
+
                 if stage in (1, 2, 3) and "note_add" not in types_seen:
                     content = _extract_note(raw_text)
                     if content:
@@ -263,8 +456,24 @@ def main() -> None:
                     # Only extract a plan if content looks like real research strategy
                     plan_content = _extract_note(raw_text)
                     if plan_content:
-                        plan_tool._run(content=plan_content[:600])
-                        log("Auto-extracted plan (LLM skipped update_plan)", agent=_current_agent[0])
+                        # Ensure every bullet becomes a checklist item
+                        lines = []
+                        for line in plan_content.splitlines():
+                            s = line.strip()
+                            if not s:
+                                continue
+                            if s.startswith("- ["):
+                                lines.append(s)
+                            elif s.startswith(("- ", "* ", "• ")):
+                                lines.append("- [ ] " + s[2:].strip())
+                            elif s[0].isdigit() and len(s) > 2 and s[1] in ".):":
+                                lines.append("- [ ] " + s[2:].strip())
+                            else:
+                                lines.append("- [ ] " + s)
+                        checklist = "\n".join(lines[:12])
+                        if checklist:
+                            plan_tool._run(content=checklist)
+                            log("Auto-extracted plan as checklist (LLM skipped update_plan)", agent=_current_agent[0])
 
                 # Only auto-extract draft from synthesizer (stage 4) — earlier stage
                 # output is rarely a coherent draft and creates noise pages in exports.
@@ -325,21 +534,8 @@ def main() -> None:
                 goal="Produce a clear, well-structured, fully cited Markdown report that directly answers the research query.",
                 backstory="You are a professional technical writer and editor. You excel at turning raw research into structured, readable reports. You cite every claim, note confidence levels inline, and organise information so readers can trust and act on it immediately.",
                 tools=[draft_tool],
-                llm=_make_llm(temperature=0.5), verbose=verbose, allow_delegation=False, max_iter=4, max_rpm=10,
+                llm=_make_llm(temperature=0.5), verbose=verbose, allow_delegation=False, max_iter=6, max_rpm=10,
             )
-
-            # ── Satisfaction check for the gap loop ──────────────────────────
-            def _has_open_gaps(text: str) -> bool:
-                """Return True if the gap analyst output signals unresolved critical gaps."""
-                # Prefer the explicit "STILL OPEN: N" count line
-                m = re.search(r"still\s+open\s*:\s*(\d+)", text, re.IGNORECASE)
-                if m:
-                    return int(m.group(1)) > 0
-                # Fallback: bare "STILL OPEN" label present in the text
-                return "still open" in text.lower()
-
-            # Mutable closure state
-            _is_gap_fill_pass: list[bool] = [False]
 
             def _stage_callback(output):
                 raw_text = (
@@ -349,22 +545,31 @@ def main() -> None:
                 ).strip()
                 agent_role = getattr(output, "agent", "") or ""
                 if "Research Specialist" in agent_role:
-                    # Initial research = stage 1; targeted gap fill = stage 3
-                    stage = 3 if _is_gap_fill_pass[0] else 1
-                    _enforce_tool_calls(raw_text, stage=stage)
-                    if not _is_gap_fill_pass[0]:
-                        # Transition to analyst within phase-1 crew
-                        log("Stage 1/4 complete — handing off to Critical Analyst", agent="Research Specialist")
-                        log("Stage 2/4 — Critical Analyst: verifying key claims and flagging gaps", agent="Critical Analyst")
-                        _current_agent[0] = "Critical Analyst"
-                        _scratchpad.stream_event({"type": "iteration_tick", "agent": "Critical Analyst", "stage": 2, "pass": 1})
-                        _scratchpad.stream_event({"type": "agent_switch", "agent": "Critical Analyst", "stage": 2})
+                    _scratchpad.stream_event({"type": "stage_complete", "stage": 1, "output": raw_text[:4000]})
+                    _enforce_tool_calls(raw_text, stage=1)
+                    log("Stage 1/4 complete — handing off to Critical Analyst", agent="Research Specialist")
+                    log("Stage 2/4 — Critical Analyst: verifying key claims and flagging gaps", agent="Critical Analyst")
+                    _current_agent[0] = "Critical Analyst"
+                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Critical Analyst", "stage": 2, "pass": 1})
+                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Critical Analyst", "stage": 2})
                 elif "Critical Analyst" in agent_role:
+                    _scratchpad.stream_event({"type": "stage_complete", "stage": 2, "output": raw_text[:4000]})
                     _enforce_tool_calls(raw_text, stage=2)
-                    log("Stage 2/4 complete — entering gap analysis loop", agent="Critical Analyst")
+                    log("Stage 2/4 complete — Gap Analyst reading findings and identifying gaps", agent="Critical Analyst")
+                    log("Stage 3/4 — Gap Analyst: identifying research gaps (analysis only)", agent="Gap Analyst")
+                    _current_agent[0] = "Gap Analyst"
+                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Gap Analyst", "stage": 3, "pass": 1})
+                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Gap Analyst", "stage": 3})
                 elif "Gap Analyst" in agent_role:
+                    _scratchpad.stream_event({"type": "stage_complete", "stage": 3, "output": raw_text[:4000]})
                     _enforce_tool_calls(raw_text, stage=3)
+                    log("Stage 3/4 — Gap Analyst complete. Handing off to Report Synthesizer.", agent="Gap Analyst")
+                    log("Stage 4/4 — Report Synthesizer: writing final report", agent="Report Synthesizer")
+                    _current_agent[0] = "Report Synthesizer"
+                    _scratchpad.stream_event({"type": "iteration_tick", "agent": "Report Synthesizer", "stage": 4, "pass": 1})
+                    _scratchpad.stream_event({"type": "agent_switch", "agent": "Report Synthesizer", "stage": 4})
                 elif "Report Synthesizer" in agent_role:
+                    _scratchpad.stream_event({"type": "stage_complete", "stage": 4, "output": raw_text[:4000]})
                     _enforce_tool_calls(raw_text, stage=4)
 
             def _step_callback(step_output):
@@ -385,35 +590,56 @@ def main() -> None:
                 except Exception:
                     pass
 
-            # ── Phase 1: Research + Analysis (single crew) ────────────────────
+            # ── Tasks: 4-stage single crew ────────────────────────────────────
+            # research → verification → gap_id → synthesis
+            # context= is minimal per task to stay within local LLM context windows.
+            # gap_id_task output goes to synthesis context so gaps are acknowledged.
+
             research_task = Task(
                 description=(
-                    f"Research the following query thoroughly:\n\n  QUERY: {q}\n{_CLARIF_BLOCK}\n"
+                    f"Research the following query thoroughly:\n\n  QUERY: {q}\n{_CLARIF_BLOCK}{_MEMORY_BLOCK}\n"
                     "You MUST use tools in this exact sequence — do not skip any step:\n\n"
-                    "STEP 1 — PLAN (REQUIRED): Call update_plan immediately with a bullet-point "
-                    "research strategy tailored to this specific query before doing anything else.\n\n"
-                    "STEP 2 — SEARCH WITH THOUGHT TRAIL: Before each new search angle, call "
-                    "record_thought with a short label describing what you are investigating "
-                    "(e.g. 'Investigating career background at Texas A&M' or 'Looking for funding sources'). "
-                    "Then run web_search at least FOUR times using different phrasings and angles. "
-                    "For each angle write a distinct query — do not repeat similar searches.\n\n"
-                    "STEP 3 — FETCH: Call fetch_webpage on the 4–6 most promising URLs. "
-                    "Prioritise [Academic], [Government], and [Non-profit/NGO] sources.\n\n"
+                    "STEP 1 — PLAN (REQUIRED): Call update_plan immediately with a checklist "
+                    "of research steps in this EXACT format — every line must start with '- [ ]':\n"
+                    "  - [ ] Search for subject's professional background and current role\n"
+                    "  - [ ] Find philanthropic history and giving patterns\n"
+                    "  - [ ] Verify employment and career claims\n"
+                    "  (…tailor steps to this specific query)\n"
+                    "Do NOT use plain bullets or numbered lists — use '- [ ]' for every step.\n\n"
+                    "STEP 2 — SEARCH → FETCH → NOTE (repeat for each angle):\n"
+                    "For EACH research angle, do ALL THREE of these in order before moving to the next angle:\n"
+                    "  a) Call record_thought with a short label for what you are investigating.\n"
+                    "  b) Call web_search with a specific query for that angle.\n"
+                    "  c) IMMEDIATELY call fetch_webpage on the #1 result URL from that search.\n"
+                    "     Do NOT run another search without fetching first.\n"
+                    "  d) Call add_note with what you learned from that page.\n"
+                    "Cover at least FOUR distinct angles this way. "
+                    "Prioritise [Academic], [Government], and [Non-profit/NGO] URLs when fetching.\n\n"
+                    "STEP 3 — FETCH ADDITIONAL PAGES: After completing all angles, fetch 2–3 more "
+                    "of the most promising URLs you have not yet read.\n\n"
                     "STEP 4 — NOTE (REQUIRED after EACH fetch): After every fetch_webpage call, "
-                    "immediately call add_note to record the key facts found on that page. "
-                    "Each note must include: the source URL, source type, and 2–4 key facts.\n\n"
-                    "STEP 5 — UPDATE PLAN: If research reveals the topic is broader or different "
-                    "than initially thought, call update_plan again to revise your strategy.\n\n"
+                    "immediately call add_note. Each note MUST follow this exact format:\n"
+                    "  URL: <url>\n"
+                    "  Source type: <type>\n"
+                    "  Key facts: 1) ... 2) ... 3) ...\n"
+                    "  Relevance: <1–2 sentences explaining what this source reveals about the "
+                    "research query and why it matters to the overall picture>\n\n"
+                    "STEP 5 — CHECK OFF PLAN (REQUIRED): After completing each search angle, "
+                    "call update_plan again with the SAME checklist but replace '- [ ]' with "
+                    "'- [x]' for every step you have now completed. Do this progressively — "
+                    "do not wait until the end. Each update_plan call should show more [x] items "
+                    "than the previous one.\n\n"
                     "STEP 6 — DRAFT (REQUIRED before finishing): Once you have read at least 4 pages, "
                     "call update_draft with a structured summary of your best current answer. "
                     "This becomes the working draft for the synthesis stage.\n\n"
-                    "STEP 7 — OUTPUT: Return a structured list of all findings grouped by sub-topic, "
-                    "each attributed to its source URL and source type tag."
+                    "STEP 7 — OUTPUT: Return a prose summary of all findings grouped by sub-topic. "
+                    "Write in full sentences. Do NOT output JSON, code blocks, or claim/source lists. "
+                    "Each paragraph should cover one sub-topic and cite sources inline as (URL)."
                 ),
                 expected_output=(
-                    "A structured list of findings grouped by sub-topic. Each finding must include "
-                    "the claim, its source URL, and source type. Aim for at least 6 distinct sources "
-                    "with a mix of types. The add_note and update_draft tools MUST have been called."
+                    "Prose paragraphs summarising findings by sub-topic, with inline source URLs. "
+                    "At least 6 sources, mix of types. No JSON. No code blocks. "
+                    "The add_note and update_draft tools MUST have been called."
                 ),
                 agent=researcher,
             )
@@ -426,8 +652,11 @@ def main() -> None:
                     "web_search and call fetch_webpage on the most authoritative result found. "
                     "Actively seek a higher-tier source than what the researcher used — prefer "
                     "[Academic], [Government], or [Primary] sources over [News] or [Social/UGC].\n\n"
-                    "STEP 3 — NOTE (REQUIRED): After each verification search, call add_note with: "
-                    "the claim being verified, your confidence label, and what the new source says.\n\n"
+                    "STEP 3 — NOTE (REQUIRED): After each verification search, call add_note with:\n"
+                    "  Claim: <claim being verified>\n"
+                    "  Confidence: [VERIFIED / LIKELY / CONTESTED / UNVERIFIED]\n"
+                    "  Evidence: <what the new source says>\n"
+                    "  Relevance: <why this verification result matters to the research question>\n\n"
                     "STEP 4 — LABEL each claim: [VERIFIED], [LIKELY], [CONTESTED], or [UNVERIFIED].\n\n"
                     "STEP 5 — FLAG any claim supported only by [Social/UGC] or a single source.\n\n"
                     "STEP 6 — OUTPUT: Return the full verification report."
@@ -442,189 +671,237 @@ def main() -> None:
                 ),
                 agent=analyst, context=[research_task],
             )
-
-            _current_agent[0] = "Research Specialist"
-            _scratchpad.stream_event({"type": "iteration_tick", "agent": "Research Specialist", "stage": 1, "pass": 1})
-            _scratchpad.stream_event({"type": "agent_switch", "agent": "Research Specialist", "stage": 1})
-
-            phase1_crew = Crew(
-                agents=[researcher, analyst],
-                tasks=[research_task, verification_task],
-                process=Process.sequential,
-                verbose=verbose,
-                task_callback=_stage_callback,
-                step_callback=_step_callback,
-            )
-            phase1_crew.kickoff()
-
-            # ── Gap loop: Identification → Targeted Research (up to N passes) ──
-            # The Gap Analyst is ANALYTICAL ONLY — it reads findings and lists gaps.
-            # The Researcher then fills STILL OPEN gaps with targeted searches.
-            # Repeats until no critical gaps remain or MAX_GAP_PASSES is reached.
-            MAX_GAP_PASSES = 2
-            all_gap_id_tasks:   list[Task] = []
-            all_gap_fill_tasks: list[Task] = []
-
-            for gap_pass in range(1, MAX_GAP_PASSES + 1):
-                # ── 3a: Gap Analyst identifies gaps (no searches) ──────────────
-                _is_gap_fill_pass[0] = False
-                _current_agent[0] = "Gap Analyst"
-                pass_label = f"pass {gap_pass}/{MAX_GAP_PASSES}"
-                prior_fill = bool(all_gap_fill_tasks)
-                log(f"Stage 3/4 — Gap Analyst: identifying research gaps ({pass_label})", agent="Gap Analyst")
-                _scratchpad.stream_event({"type": "iteration_tick", "agent": "Gap Analyst", "stage": 3, "pass": gap_pass})
-                _scratchpad.stream_event({"type": "agent_switch", "agent": "Gap Analyst", "stage": 3})
-
-                gap_id_task = Task(
-                    description=(
-                        f"[Gap Analysis — {pass_label}] Review ALL findings: the initial research, "
-                        f"the analyst's verification"
-                        + (", and the targeted gap research from the previous pass" if prior_fill else "")
-                        + f".\n{_CLARIF_BLOCK}\n"
-                        "ANALYTICAL ONLY — do not run searches. Read what has been gathered and identify what is still missing.\n\n"
-                        "STEP 1 — REVIEW: Read the full set of research notes, verification findings"
-                        + (", and prior gap research results" if prior_fill else "")
-                        + ".\n\n"
-                        "STEP 2 — IDENTIFY GAPS: List the 2–4 most important gaps:\n"
-                        "  - Unanswered questions raised by the research\n"
-                        "  - Claims labelled [UNVERIFIED] or [CONTESTED] lacking sufficient evidence\n"
-                        "  - Missing counter-arguments or opposing viewpoints\n"
-                        "  - Missing context that would materially strengthen the final report\n\n"
-                        "STEP 3 — CLASSIFY each gap with one of:\n"
-                        "  RESOLVED — fully addressed by available research\n"
-                        "  PARTIALLY RESOLVED — touched but incomplete\n"
-                        "  STILL OPEN — critical, unaddressed, would meaningfully improve the report\n\n"
-                        "STEP 4 — NOTE (optional): Call add_note to record your gap analysis summary.\n\n"
-                        "STEP 5 — OUTPUT: List each gap with its classification and a one-line explanation.\n"
-                        "  Your final line MUST be exactly: STILL OPEN: N  (N = integer count of STILL OPEN gaps)"
-                    ),
-                    expected_output=(
-                        "A prioritised gap list. Each gap labelled RESOLVED / PARTIALLY RESOLVED / STILL OPEN. "
-                        "Last line MUST be: STILL OPEN: N"
-                    ),
-                    agent=gap_analyst,
-                    context=[research_task, verification_task] + all_gap_fill_tasks,
-                )
-
-                gap_id_crew = Crew(
-                    agents=[gap_analyst],
-                    tasks=[gap_id_task],
-                    process=Process.sequential,
-                    verbose=verbose,
-                    task_callback=_stage_callback,
-                    step_callback=_step_callback,
-                )
-                gap_id_crew.kickoff()
-                all_gap_id_tasks.append(gap_id_task)
-
-                gap_output = (
-                    (gap_id_task.output.raw if gap_id_task.output else "") or ""
-                ).strip()
-
-                # ── Satisfaction check ─────────────────────────────────────────
-                if not _has_open_gaps(gap_output):
-                    log("Gap Analyst satisfied — no critical gaps remain. Proceeding to synthesis.", agent="Gap Analyst")
-                    break
-                if gap_pass >= MAX_GAP_PASSES:
-                    log(
-                        f"Gap Analyst: max passes ({MAX_GAP_PASSES}) reached. "
-                        "Proceeding to synthesis — remaining open items noted in Caveats.",
-                        agent="Gap Analyst",
-                    )
-                    break
-
-                # ── 3b: Researcher fills STILL OPEN gaps with targeted searches ─
-                _is_gap_fill_pass[0] = True
-                _current_agent[0] = "Research Specialist"
-                log(f"Stage 3/4 — Research Specialist: targeted gap research ({pass_label})", agent="Research Specialist")
-                _scratchpad.stream_event({"type": "iteration_tick", "agent": "Research Specialist", "stage": 3, "pass": gap_pass})
-                _scratchpad.stream_event({"type": "agent_switch", "agent": "Research Specialist", "stage": 3})
-
-                gap_fill_task = Task(
-                    description=(
-                        f"TARGETED GAP RESEARCH — {pass_label}\n\n"
-                        "The Gap Analyst reviewed all research and identified these open issues:\n\n"
-                        f"{gap_output}\n\n"
-                        "Your job: fill ONLY the gaps labelled STILL OPEN above. "
-                        "Skip RESOLVED and PARTIALLY RESOLVED items — they are already covered.\n\n"
-                        "For each STILL OPEN gap:\n"
-                        "STEP 1 — RECORD THOUGHT (REQUIRED): Call record_thought naming the gap you are addressing "
-                        "(e.g. 'Filling gap: funding breakdown not found').\n"
-                        "STEP 2 — SEARCH: Run 2–3 targeted web_search queries specific to this gap. "
-                        "Use precise, gap-focused phrasing. Do not repeat searches already done.\n"
-                        "STEP 3 — FETCH: Call fetch_webpage on the 2 most relevant results.\n"
-                        "STEP 4 — NOTE (REQUIRED): Call add_note with:\n"
-                        "  - The gap label (copy from the list above)\n"
-                        "  - What you found (or 'Not found after targeted search' if nothing relevant)\n"
-                        "  - Your resolution assessment: RESOLVED / PARTIALLY RESOLVED / STILL OPEN\n\n"
-                        "Do not re-research already resolved items. Focus exclusively on STILL OPEN gaps."
-                    ),
-                    expected_output=(
-                        "A summary of targeted findings for each STILL OPEN gap with resolution assessment. "
-                        "record_thought and add_note MUST have been called for each gap researched."
-                    ),
-                    agent=researcher,
-                    context=[research_task, verification_task] + all_gap_id_tasks + all_gap_fill_tasks,
-                )
-
-                gap_fill_crew = Crew(
-                    agents=[researcher],
-                    tasks=[gap_fill_task],
-                    process=Process.sequential,
-                    verbose=verbose,
-                    task_callback=_stage_callback,
-                    step_callback=_step_callback,
-                )
-                gap_fill_crew.kickoff()
-                all_gap_fill_tasks.append(gap_fill_task)
-
-            # ── Phase 3: Synthesis ─────────────────────────────────────────────
-            _is_gap_fill_pass[0] = False
-            _current_agent[0] = "Report Synthesizer"
-            log("Stage 4/4 — Report Synthesizer: writing final report", agent="Report Synthesizer")
-            _scratchpad.stream_event({"type": "iteration_tick", "agent": "Report Synthesizer", "stage": 4, "pass": 1})
-            _scratchpad.stream_event({"type": "agent_switch", "agent": "Report Synthesizer", "stage": 4})
-
-            synthesis_task = Task(
+            gap_id_task = Task(
                 description=(
-                    f"Write the final research report answering: '{q}'\n{_CLARIF_BLOCK}\n"
-                    "You have access to the full research output including any targeted gap-filling research.\n\n"
-                    "You MUST use tools in this sequence:\n\n"
-                    "STEP 1 — DRAFT (REQUIRED FIRST): Before writing anything, call update_draft "
-                    "with a complete Markdown draft of the report. Structure it as:\n"
-                    "  ## Summary\n  ## Key Findings\n  ## Detailed Analysis\n"
-                    "  ## Caveats & Uncertainties\n  ## Sources\n\n"
-                    "STEP 2 — REFINE: Review the draft. If any section is thin, call update_draft "
-                    "again with an improved version.\n\n"
-                    "STEP 3 — OUTPUT: Return the final polished report text.\n\n"
-                    "Rules for ALL content:\n"
-                    "- Be factual and direct. Every claim must have a citation.\n"
-                    "- If information is insufficient, say so clearly.\n"
-                    "- The gap analysis identified remaining unknowns — acknowledge these explicitly in Caveats.\n"
-                    "- CITATION INTEGRITY: Only cite URLs that were explicitly returned by "
-                    "web_search or fetch_webpage during this session. NEVER invent or guess URLs. "
-                    "Write [source not retrieved] instead of fabricating a link."
+                    f"Review the analyst's verification findings above for query: '{q}'\n{_CLARIF_BLOCK}\n"
+                    "ANALYTICAL ONLY — do not run searches. Read what has been found and identify gaps.\n\n"
+                    "STEP 1 — IDENTIFY GAPS: List 2–4 important gaps:\n"
+                    "  - Unanswered questions raised by the research\n"
+                    "  - Claims labelled [UNVERIFIED] or [CONTESTED] lacking evidence\n"
+                    "  - Missing counter-arguments or opposing viewpoints\n"
+                    "  - Missing context that would materially strengthen the report\n\n"
+                    "STEP 2 — CLASSIFY each gap:\n"
+                    "  RESOLVED — fully addressed\n"
+                    "  PARTIALLY RESOLVED — touched but incomplete\n"
+                    "  STILL OPEN — critical, unaddressed\n\n"
+                    "STEP 3 — NOTE (optional): Call add_note to record your gap summary.\n\n"
+                    "STEP 4 — OUTPUT: List each gap with classification and one-line explanation.\n"
+                    "  Your final line MUST be exactly: STILL OPEN: N  (N = integer count of critical open gaps)"
                 ),
                 expected_output=(
-                    "A complete Markdown research report with Summary, Key Findings, Detailed "
-                    "Analysis, Caveats, and a numbered Sources list. All cited URLs must have been "
-                    "explicitly found during this session. The update_draft tool MUST have been called."
+                    "A gap list with each item labelled RESOLVED / PARTIALLY RESOLVED / STILL OPEN. "
+                    "Last line MUST be: STILL OPEN: N"
+                ),
+                agent=gap_analyst,
+                context=[verification_task],
+            )
+            synthesis_task = Task(
+                description=(
+                    f"Write the final research report answering: '{q}'\n{_CLARIF_BLOCK}{_MEMORY_BLOCK}\n"
+                    "OUTPUT RULES: Markdown prose only — no JSON, no code blocks. "
+                    "First line MUST be '## Summary' with no text before it. "
+                    "Cite every factual claim with its source URL in parentheses.\n\n"
+                    "STEP 1 — Call update_draft with a complete report containing ALL these sections:\n"
+                    "## Summary — 2–3 sentence executive answer to the query.\n"
+                    "## Background — who/what the subject is and relevant context (2+ paragraphs).\n"
+                    "## Key Findings — 4–6 bullet points each citing a URL. Cover: professional "
+                    "background, financial profile, philanthropic history, personality/values, "
+                    "institutional alignment.\n"
+                    "## Detailed Analysis — one ### subsection per Key Finding, each 2+ paragraphs "
+                    "discussing evidence quality and confidence level.\n"
+                    "## Caveats & Uncertainties — every STILL OPEN gap from gap analysis and what "
+                    "it means for reliability of conclusions.\n"
+                    "## Sources — numbered list of all cited URLs with one-line descriptions.\n\n"
+                    "STEP 2 — Return the final report. First line must be '## Summary'."
+                ),
+                expected_output=(
+                    "Complete Markdown report starting with '## Summary'. "
+                    "All sections present: Summary, Background, Key Findings, "
+                    "Detailed Analysis (with ### subsections), Caveats & Uncertainties, Sources. "
+                    "500+ words. No JSON. Every claim has a source URL. update_draft was called."
                 ),
                 agent=synthesizer,
-                context=[research_task, verification_task] + all_gap_id_tasks + all_gap_fill_tasks,
+                context=[research_task, verification_task, gap_id_task],
             )
 
-            synthesis_crew = Crew(
-                agents=[synthesizer],
-                tasks=[synthesis_task],
+            # ── Gap-fill: pre-mark parent sources and inject gap focus ────────
+            if gap_context:
+                from tools import _fetched as _ftk
+                for _url in (parent_sources or []):
+                    _ftk.mark(_url)
+
+                _gap_block = (
+                    "\n\n[GAP-FILLING MODE — TARGETED FOLLOW-UP RESEARCH]\n"
+                    "This is a focused continuation of a prior completed research run.\n"
+                    "Your SOLE MISSION is to investigate the following STILL OPEN gaps:\n\n"
+                    f"{gap_context}\n\n"
+                    "CRITICAL CONSTRAINTS FOR THIS RUN:\n"
+                    "  • Focus ONLY on finding NEW sources that specifically answer the open questions above.\n"
+                    "  • Do NOT re-search topics already thoroughly covered in the original run.\n"
+                    "  • Use highly targeted queries aimed directly at each gap (e.g. primary data, counter-arguments, missing context).\n"
+                    "  • Prioritise [Academic], [Government], and [Primary] sources for any unverified claims.\n"
+                    "  • Your plan (update_plan) should list one step per gap item — mark each off as you address it.\n"
+                    "[END GAP-FILLING INSTRUCTIONS]\n"
+                )
+                research_task = Task(
+                    description=_gap_block + research_task.description,
+                    expected_output=research_task.expected_output,
+                    agent=researcher,
+                )
+                _scratchpad.stream_event({
+                    "type": "log",
+                    "message": (
+                        f"🔍 GAP-FILL RUN: focusing on {len((parent_sources or []))} "
+                        f"pre-marked sources — researching open gaps from prior analysis"
+                    ),
+                })
+
+            # ── Resume: pre-mark fetched URLs and inject prior context ────────
+            _start_stage = 1
+            _resume_prefix = ""
+
+            if checkpoint and checkpoint.get("last_stage_completed", 0) > 0:
+                from tools import _fetched as _ftk
+                for _url in checkpoint.get("fetched_urls", []):
+                    _ftk.mark(_url)
+
+                _start_stage = checkpoint["last_stage_completed"] + 1
+
+                _parts = ["\n\n[RESUMED RUN — PRIOR RESEARCH CONTEXT]"]
+                _stage_labels = {1: "Stage 1 Research", 2: "Stage 2 Verification", 3: "Stage 3 Gap Analysis"}
+                for _sn in sorted(checkpoint.get("stage_outputs", {}), key=int):
+                    _out = checkpoint["stage_outputs"][_sn][:2500]
+                    if _out:
+                        _parts.append(f"\n[{_stage_labels.get(int(_sn), f'Stage {_sn}')} Output]:\n{_out}")
+                if checkpoint.get("notes"):
+                    _joined = "\n---\n".join(n[:250] for n in checkpoint["notes"][-20:])
+                    _parts.append(f"\n[Prior Notes ({len(checkpoint['notes'])} recorded, showing last 20)]:\n{_joined}")
+                if checkpoint.get("plan"):
+                    _parts.append(f"\n[Last Known Plan]:\n{checkpoint['plan']}")
+                if checkpoint.get("draft"):
+                    _parts.append(f"\n[Last Working Draft]:\n{checkpoint['draft'][:1000]}")
+                _parts.append("[END PRIOR CONTEXT]\n")
+                _resume_prefix = "\n".join(_parts)
+
+                log(f"▶ Resuming from Stage {_start_stage} — {len(checkpoint['fetched_urls'])} URLs pre-marked, "
+                    f"{len(checkpoint['notes'])} notes, {len(checkpoint['stage_outputs'])} stages already done",
+                    agent="Research Specialist")
+                _scratchpad.stream_event({
+                    "type": "log",
+                    "message": f"▶ RESUMED: continuing pipeline from Stage {_start_stage}/4 "
+                               f"({len(checkpoint['fetched_urls'])} sources already gathered, "
+                               f"{len(checkpoint['notes'])} notes preserved)",
+                })
+
+            # Inject resume context into the first task we're running
+            if _resume_prefix:
+                if _start_stage == 2:
+                    verification_task = Task(
+                        description=verification_task.description + _resume_prefix,
+                        expected_output=verification_task.expected_output,
+                        agent=analyst,
+                    )
+                elif _start_stage == 3:
+                    gap_id_task = Task(
+                        description=gap_id_task.description + _resume_prefix,
+                        expected_output=gap_id_task.expected_output,
+                        agent=gap_analyst,
+                    )
+                elif _start_stage >= 4:
+                    synthesis_task = Task(
+                        description=synthesis_task.description + _resume_prefix,
+                        expected_output=synthesis_task.expected_output,
+                        agent=synthesizer,
+                        context=[],
+                    )
+
+            # Only run tasks from the failed stage onward
+            _all_tasks = [research_task, verification_task, gap_id_task, synthesis_task]
+            tasks_to_run = _all_tasks[_start_stage - 1:]
+
+            _start_agent_map = {
+                1: "Research Specialist",
+                2: "Critical Analyst",
+                3: "Gap Analyst",
+                4: "Report Synthesizer",
+            }
+            _start_agent = _start_agent_map.get(_start_stage, "Research Specialist")
+
+            # ── Single crew — sequential ──────────────────────────────────────
+            _current_agent[0] = _start_agent
+            _scratchpad.stream_event({"type": "iteration_tick", "agent": _start_agent, "stage": _start_stage, "pass": 1})
+            _scratchpad.stream_event({"type": "agent_switch", "agent": _start_agent, "stage": _start_stage})
+
+            crew = Crew(
+                agents=[researcher, analyst, gap_analyst],
+                tasks=tasks_to_run,
                 process=Process.sequential,
                 verbose=verbose,
                 task_callback=_stage_callback,
                 step_callback=_step_callback,
             )
-            return str(synthesis_crew.kickoff())
 
-        result = _instrumented_run(query, clarifications=clarifications)
+            # Auto-retry on LM Studio connection failures (transient crashes)
+            _MAX_LLM_RETRIES = 2
+            _LLM_RETRY_DELAY = 30
+            _result = None
+            for _attempt in range(_MAX_LLM_RETRIES + 1):
+                try:
+                    _result = str(crew.kickoff())
+                    break
+                except Exception as _exc:
+                    _msg = str(_exc).lower()
+                    _is_conn = any(s in _msg for s in (
+                        "connection", "connect error", "timeout", "refused",
+                        "unreachable", "network", "socket", "eof",
+                        "broken pipe", "bad gateway", "service unavailable",
+                    ))
+                    if _is_conn and _attempt < _MAX_LLM_RETRIES:
+                        log(f"LLM connection lost (attempt {_attempt + 1}/{_MAX_LLM_RETRIES + 1}): "
+                            f"{_exc}. Retrying in {_LLM_RETRY_DELAY}s…")
+                        _scratchpad.stream_event({
+                            "type": "log",
+                            "message": f"⚠ LLM connection lost — retrying in {_LLM_RETRY_DELAY}s "
+                                       f"(attempt {_attempt + 1}/{_MAX_LLM_RETRIES + 1})…",
+                        })
+                        time.sleep(_LLM_RETRY_DELAY)
+                    else:
+                        raise
+            return _result
+
+        # Load checkpoint if this is a resumed run
+        _checkpoint = None
+        if data.get("resume"):
+            stream_file = jobs_dir / f"{job_id}.stream"
+            _checkpoint = _read_checkpoint_from_stream(stream_file)
+            log(f"Resume checkpoint loaded: stage {_checkpoint['last_stage_completed']} last completed, "
+                f"{len(_checkpoint['fetched_urls'])} fetched URLs, "
+                f"{len(_checkpoint['notes'])} notes")
+
+        # Load already-fetched URLs from the parent report so we don't re-fetch them
+        _parent_sources: list[str] = []
+        if _parent_report and _gap_context:
+            try:
+                import json as _json
+                _reports_dir = Path(__file__).parent / "reports"
+                _src_file = _reports_dir / Path(_parent_report).stem / "sources.json"
+                if _src_file.exists():
+                    _parent_sources = [
+                        s["url"] for s in _json.loads(_src_file.read_text(encoding="utf-8"))
+                        if s.get("url") and s.get("confirmed")
+                    ]
+                    log(f"Gap-fill mode: {len(_parent_sources)} parent sources pre-marked as already read")
+            except Exception:
+                pass
+
+        result = _instrumented_run(
+            query,
+            clarifications=clarifications,
+            memory_insights=_memory_insights,
+            checkpoint=_checkpoint,
+            gap_context=_gap_context,
+            parent_sources=_parent_sources,
+        )
         from tools import _search_cache
         stats = _search_cache._cache_stats()
         log(f"Search cache stats — hits: {stats['hits']}, misses: {stats['misses']}")

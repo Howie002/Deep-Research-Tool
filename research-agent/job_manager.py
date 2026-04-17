@@ -24,16 +24,29 @@ ORPHAN_TTL_SECONDS = 7 * 24 * 60 * 60
 STARTUP_GRACE_SECONDS = 60
 
 
-def create_job(query: str, jobs_dir: Path, clarifications: str = "") -> str:
+def create_job(
+    query: str,
+    jobs_dir: Path,
+    clarifications: str = "",
+    no_learn: bool = False,
+    parent_report: str | None = None,
+    gap_context: str | None = None,
+) -> str:
     """Write a new job file and return the job_id."""
     job_id = str(uuid.uuid4())
-    _write_job(job_id, jobs_dir, {
+    data: dict = {
         "status": "running",
         "query": query,
         "clarifications": clarifications,
+        "no_learn": no_learn,
         "result": "",
         "started_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if parent_report:
+        data["parent_report"] = parent_report
+    if gap_context:
+        data["gap_context"] = gap_context
+    _write_job(job_id, jobs_dir, data)
     return job_id
 
 
@@ -363,6 +376,50 @@ def launch_worker(job_id: str, jobs_dir: Path, worker_script: Path) -> None:
         _write_job(job_id, jobs_dir, data)
     except Exception:
         pass
+
+
+def resume_job(job_id: str, jobs_dir: Path) -> dict:
+    """
+    Reset a failed/errored job so it can be resumed from where it left off.
+
+    - Strips the trailing 'done' event from the .stream file so that SSE replay
+      does not fire the old error event and prematurely close the browser connection.
+    - Resets status to 'running' and sets resume=True so the worker reads the checkpoint
+    - Returns the updated job dict so callers can re-launch the worker
+    Raises FileNotFoundError if the job doesn't exist.
+    Raises ValueError if the job is not in a resumable state (must be 'error').
+    """
+    data = read_job(job_id, jobs_dir)
+    status = data.get("status")
+    if status != "error":
+        raise ValueError(f"Job is not resumable (status={status!r}). Only 'error' jobs can be resumed.")
+
+    # Strip any trailing 'done' event from the stream file.  The SSE endpoint
+    # replays the file from line 0, so if the old error 'done' event is present
+    # the browser will fire stopElapsed/showJobError and close the EventSource
+    # before the resumed worker's new events can arrive.
+    stream_file = jobs_dir / f"{job_id}.stream"
+    if stream_file.exists():
+        try:
+            lines = stream_file.read_text(encoding="utf-8").splitlines()
+            cleaned = [
+                ln for ln in lines
+                if '"type":"done"' not in ln.replace(" ", "") and
+                   '"type": "done"' not in ln
+            ]
+            stream_file.write_text(
+                "\n".join(cleaned) + ("\n" if cleaned else ""),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    data["status"] = "running"
+    data["result"] = ""
+    data["resume"] = True
+    data["resumed_at"] = datetime.now(timezone.utc).isoformat()
+    _write_job(job_id, jobs_dir, data)
+    return data
 
 
 def cancel_job(job_id: str, jobs_dir: Path) -> dict:

@@ -43,6 +43,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from config import API_HOST, API_KEY, API_PORT, CORS_ORIGINS, MCP_SERVER_NAME
+import learning_store as _ls
 from job_manager import (
     cancel_job as _cancel_job,
     check_job_health,
@@ -53,16 +54,18 @@ from job_manager import (
     launch_worker,
     read_job,
     read_log,
+    resume_job as _resume_job,
     save_report,
     save_run,
     sweep_stale_jobs,
 )
 
-BASE_DIR      = Path(__file__).parent
-JOBS_DIR      = BASE_DIR / "jobs"
-REPORTS_DIR   = BASE_DIR / "reports"
-STATIC_DIR    = BASE_DIR / "static"
-WORKER_SCRIPT = BASE_DIR / "research_worker.py"
+BASE_DIR           = Path(__file__).parent
+JOBS_DIR           = BASE_DIR / "jobs"
+REPORTS_DIR        = BASE_DIR / "reports"
+STATIC_DIR         = BASE_DIR / "static"
+WORKER_SCRIPT      = BASE_DIR / "research_worker.py"
+LEARNING_STORE_PATH = BASE_DIR / "learning_store.json"
 
 JOBS_DIR.mkdir(exist_ok=True)
 REPORTS_DIR.mkdir(exist_ok=True)
@@ -116,6 +119,9 @@ async def verify_api_key(key: Optional[str] = Security(_api_key_header)) -> None
 class JobCreateRequest(BaseModel):
     query: str = Field(..., min_length=3, max_length=2000, description="The research question or topic.")
     clarifications: str = Field(default="", max_length=2000, description="Optional pre-run answers to scope the research.")
+    no_learn: bool = Field(default=False, description="When true, this run is excluded from the learning store.")
+    parent_report: Optional[str] = Field(default=None, description="Filename of the parent report (gap-fill continuation runs).")
+    gap_context: Optional[str] = Field(default=None, max_length=8000, description="Gap analysis text from the parent run to focus on.")
 
 
 class JobCreateResponse(BaseModel):
@@ -127,6 +133,7 @@ class JobStatusResponse(BaseModel):
     log: list[dict]           # new log entries since log_offset
     new_offset: int
     result: Optional[str] = None
+    query: Optional[str] = None
 
 
 class CancelJobResponse(BaseModel):
@@ -307,6 +314,72 @@ def _save_tags(reports_dir: Path, data: dict[str, list[str]]) -> None:
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
+# ── Learning store schemas ─────────────────────────────────────────────────
+
+
+class MemoryInsight(BaseModel):
+    id: str
+    created_at: str
+    source_run: str = ""
+    query: str = ""
+    topic_domain: str = ""
+    keywords: list[str] = []
+    lessons: list[str] = []
+    tags: list[str] = []
+
+
+class MemoryListResponse(BaseModel):
+    insights: list[MemoryInsight]
+    total: int
+
+
+class MemoryUpdateRequest(BaseModel):
+    lessons: Optional[list[str]] = None
+    tags: Optional[list[str]] = None
+    topic_domain: Optional[str] = None
+    keywords: Optional[list[str]] = None
+
+
+# ── Background reflection worker ───────────────────────────────────────────
+
+
+def _trigger_reflection(prefix: str, query: str, no_learn: bool) -> None:
+    """
+    Spawn a daemon thread that calls run_reflection() after a run completes.
+    The thread reads the saved artifacts from REPORTS_DIR/{prefix}/ so it
+    must be called AFTER save_run() and BEFORE cleanup_job().
+    """
+    if no_learn:
+        return
+
+    def _worker():
+        try:
+            art_dir = REPORTS_DIR / prefix
+            plan  = (art_dir / "plan.md").read_text(encoding="utf-8")  if (art_dir / "plan.md").exists()  else ""
+            notes = (art_dir / "notes.md").read_text(encoding="utf-8") if (art_dir / "notes.md").exists() else ""
+            gaps  = (art_dir / "gaps.md").read_text(encoding="utf-8")  if (art_dir / "gaps.md").exists()  else ""
+            meta: dict = {}
+            meta_f = art_dir / "meta.json"
+            if meta_f.exists():
+                try:
+                    meta = _json.loads(meta_f.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            _ls.run_reflection(
+                query=query,
+                plan=plan,
+                notes=notes,
+                gaps=gaps,
+                meta=meta,
+                store_path=LEARNING_STORE_PATH,
+                source_run=prefix,
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 # ── API endpoints ──────────────────────────────────────────────────────────
 
 
@@ -322,11 +395,40 @@ async def start_job(request: Request, body: JobCreateRequest) -> JobCreateRespon
     if existing:
         return JobCreateResponse(job_id=existing)
 
-    job_id = _create_job(query, JOBS_DIR, clarifications=body.clarifications)
+    job_id = _create_job(
+        query, JOBS_DIR,
+        clarifications=body.clarifications,
+        no_learn=body.no_learn,
+        parent_report=body.parent_report,
+        gap_context=body.gap_context,
+    )
     try:
         launch_worker(job_id, JOBS_DIR, WORKER_SCRIPT)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to start research worker: {exc}")
+    return JobCreateResponse(job_id=job_id)
+
+
+@app.post("/api/jobs/{job_id}/resume", response_model=JobCreateResponse, dependencies=[Depends(verify_api_key)])
+async def resume_job(job_id: str) -> JobCreateResponse:
+    """
+    Resume a failed research job from where it left off.
+
+    Resets the job status to 'running', preserves the .stream file (which contains
+    all prior events, notes, fetched URLs, and stage outputs), then re-launches the
+    worker. The worker reads the stream checkpoint and continues from the failed stage.
+    """
+    job_file = JOBS_DIR / f"{job_id}.json"
+    if not job_file.exists():
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    try:
+        _resume_job(job_id, JOBS_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to resume job: {exc}")
+    # Re-launch the worker for the same job_id (stream file preserved)
+    launch_worker(job_id, JOBS_DIR, WORKER_SCRIPT)
     return JobCreateResponse(job_id=job_id)
 
 
@@ -411,10 +513,11 @@ async def get_job(job_id: str, log_offset: int = 0) -> JobStatusResponse:
 
     data = check_job_health(job_id, JOBS_DIR, data)
     status = data.get("status", "unknown")
+    query  = data.get("query", "")
     new_log, new_offset = read_log(job_id, JOBS_DIR, log_offset)
 
     if status == "running":
-        return JobStatusResponse(status="running", log=new_log, new_offset=new_offset)
+        return JobStatusResponse(status="running", log=new_log, new_offset=new_offset, query=query)
 
     if status == "error":
         return JobStatusResponse(
@@ -422,17 +525,19 @@ async def get_job(job_id: str, log_offset: int = 0) -> JobStatusResponse:
             log=new_log,
             new_offset=new_offset,
             result=data.get("result", "Unknown error"),
+            query=query,
         )
 
     # Complete — save report + artifacts, update index, clean up, return result
     result = data.get("result", "")
-    save_run(job_id, JOBS_DIR, REPORTS_DIR,
-             data.get("query", ""), result,
-             status="complete",
-             started_at=data.get("started_at", ""))
+    prefix = save_run(job_id, JOBS_DIR, REPORTS_DIR, query, result,
+                      status="complete",
+                      started_at=data.get("started_at", ""))
+    if prefix:
+        _trigger_reflection(prefix, query, data.get("no_learn", False))
     rebuild_index(REPORTS_DIR)
     cleanup_job(job_id, JOBS_DIR)
-    return JobStatusResponse(status="complete", log=new_log, new_offset=new_offset, result=result)
+    return JobStatusResponse(status="complete", log=new_log, new_offset=new_offset, result=result, query=query)
 
 
 @app.get("/api/jobs/{job_id}/stream")
@@ -488,10 +593,12 @@ async def stream_job(job_id: str) -> StreamingResponse:
                                 if status == "complete":
                                     try:
                                         jdata = read_job(job_id, JOBS_DIR)
-                                        save_run(job_id, JOBS_DIR, REPORTS_DIR,
-                                                 jdata.get("query", ""), result,
-                                                 status="complete",
-                                                 started_at=jdata.get("started_at", ""))
+                                        pfx = save_run(job_id, JOBS_DIR, REPORTS_DIR,
+                                                       jdata.get("query", ""), result,
+                                                       status="complete",
+                                                       started_at=jdata.get("started_at", ""))
+                                        if pfx:
+                                            _trigger_reflection(pfx, jdata.get("query", ""), jdata.get("no_learn", False))
                                         rebuild_index(REPORTS_DIR)
                                         cleanup_job(job_id, JOBS_DIR)
                                     except Exception:
@@ -516,10 +623,12 @@ async def stream_job(job_id: str) -> StreamingResponse:
                         status = jdata.get("status", "error")
                         result = jdata.get("result", "")
                         if status == "complete":
-                            save_run(job_id, JOBS_DIR, REPORTS_DIR,
-                                     jdata.get("query", ""), result,
-                                     status="complete",
-                                     started_at=jdata.get("started_at", ""))
+                            pfx = save_run(job_id, JOBS_DIR, REPORTS_DIR,
+                                           jdata.get("query", ""), result,
+                                           status="complete",
+                                           started_at=jdata.get("started_at", ""))
+                            if pfx:
+                                _trigger_reflection(pfx, jdata.get("query", ""), jdata.get("no_learn", False))
                             rebuild_index(REPORTS_DIR)
                             cleanup_job(job_id, JOBS_DIR)
                         yield f"data: {_json.dumps({'type': 'done', 'status': status, 'result': result})}\n\n"
@@ -844,7 +953,7 @@ sup.cite-ref {
 
 _CITE_RE = re.compile(r'【(https?://[^|】\s]+)\s*\|([^】]*)】')
 
-_ALL_SECTIONS: set[str] = {"plan", "notes", "sources", "stats", "tree"}
+_ALL_SECTIONS: set[str] = {"plan", "notes", "sources", "stats", "tree", "mindmap"}
 
 
 def _generate_cover_title(query: str, report_md: str) -> tuple[str, str]:
@@ -1320,6 +1429,35 @@ def _build_export_html(
         except Exception:
             pass
 
+    # ── Mind Map (static radial SVG) ─────────────────────────────────────────
+    if "mindmap" in sections:
+        try:
+            mm_audit_file = art_dir / "audit.jsonl" if art_dir else None
+            if mm_audit_file and mm_audit_file.exists():
+                mm_events: list[dict] = []
+                for _line in mm_audit_file.read_text(encoding="utf-8").splitlines():
+                    _line = _line.strip()
+                    if _line:
+                        try:
+                            mm_events.append(_json.loads(_line))
+                        except _json.JSONDecodeError:
+                            pass
+                mm_data = _build_mindmap(mm_events, query=query)
+                if mm_data.get("nodes"):
+                    mm_svg = _build_mindmap_svg(mm_data["nodes"], mm_data["edges"])
+                    if mm_svg:
+                        html_parts.append('<div class="section section-break">')
+                        html_parts.append('<div class="section-title">Research Mind Map</div>')
+                        html_parts.append(
+                            '<p style="font-size:9pt;color:#6a6a90;margin-bottom:10pt">'
+                            'Force-directed graph of research reasoning: purple = thought nodes, '
+                            'blue = searches, green = pages read.</p>'
+                        )
+                        html_parts.append(mm_svg)
+                        html_parts.append('</div>')
+        except Exception:
+            pass
+
     html_parts.append('</body></html>')
     return "".join(html_parts)
 
@@ -1363,6 +1501,155 @@ def _render_tree_html(node: dict, depth: int = 0) -> str:
         for child in node.get("children", [])
     )
     return row + children_html
+
+
+def _build_mindmap_svg(nodes_list: list[dict], edges_list: list[dict]) -> str:
+    """Generate a static radial SVG of the mind map for PDF export."""
+    import math as _math
+
+    W, H = 760, 540
+    cx, cy = W / 2, H / 2
+
+    COLORS = {
+        "query":    "#6366f1",
+        "thought":  "#c084fc",
+        "search":   "#38bdf8",
+        "enriched": "#34d399",
+        "stub":     "#6b7280",
+    }
+    NODE_R = {"query": 14, "thought": 9, "search": 7, "enriched": 5, "stub": 4}
+
+    # Index nodes
+    by_id: dict[str, dict] = {n["id"]: n for n in nodes_list}
+
+    # Build directed children map (led_to + found_via edges only)
+    children: dict[str, list[str]] = {}
+    MAX_KIDS = {"query": 14, "thought": 8, "search": 10, "enriched": 0, "stub": 0}
+    _seen_edges: set[tuple] = set()
+    for e in edges_list:
+        rel = e.get("relation", "")
+        if rel not in ("led_to", "found_via"):
+            continue
+        src, tgt = e.get("source", ""), e.get("target", "")
+        if (src, tgt) in _seen_edges or src not in by_id or tgt not in by_id:
+            continue
+        _seen_edges.add((src, tgt))
+        ptype = by_id[src].get("type", "stub")
+        cap = MAX_KIDS.get(ptype, 0)
+        if len(children.get(src, [])) < cap:
+            children.setdefault(src, []).append(tgt)
+
+    def _subtree_leaves(nid: str, visited: set | None = None) -> int:
+        if visited is None:
+            visited = set()
+        if nid in visited:
+            return 1
+        visited.add(nid)
+        kids = children.get(nid, [])
+        return max(1, sum(_subtree_leaves(k, visited) for k in kids))
+
+    positions: dict[str, tuple[float, float]] = {}
+
+    def _place(nid: str, r: float, a_start: float, a_end: float, visited: set | None = None) -> None:
+        if visited is None:
+            visited = set()
+        if nid in visited:
+            return
+        visited.add(nid)
+        mid = (a_start + a_end) / 2
+        positions[nid] = (cx + r * _math.cos(mid), cy + r * _math.sin(mid))
+        kids = children.get(nid, [])
+        if not kids:
+            return
+        ntype = by_id.get(nid, {}).get("type", "search")
+        next_r = {"query": 100, "thought": 195, "search": 295}.get(ntype, r + 80)
+        total = sum(_subtree_leaves(k) for k in kids)
+        start = a_start
+        for kid in kids:
+            frac = _subtree_leaves(kid) / max(total, 1)
+            _place(kid, next_r, start, start + (a_end - a_start) * frac, visited)
+            start += (a_end - a_start) * frac
+
+    # Find and place root
+    root_id = next((n["id"] for n in nodes_list if n.get("type") == "query"), None)
+    if not root_id:
+        return ""
+    positions[root_id] = (cx, cy)
+    kids = children.get(root_id, [])
+    if kids:
+        total = sum(_subtree_leaves(k) for k in kids)
+        angle = -_math.pi / 2  # start from top
+        for kid in kids:
+            frac = _subtree_leaves(kid) / max(total, 1)
+            sector = 2 * _math.pi * frac
+            _place(kid, 100, angle, angle + sector, {root_id})
+            angle += sector
+
+    svg: list[str] = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}"'
+        f' style="background:#0f0f20;border-radius:8pt;font-family:Arial,Helvetica,sans-serif;display:block">'
+    ]
+
+    # Edges
+    EDGE_COLORS = {"led_to": "#6d28d9", "found_via": "#1e40af", "shares_topic": "#0e7490"}
+    for e in edges_list:
+        src, tgt = e.get("source", ""), e.get("target", "")
+        if src not in positions or tgt not in positions:
+            continue
+        x1, y1 = positions[src]
+        x2, y2 = positions[tgt]
+        rel = e.get("relation", "led_to")
+        col = EDGE_COLORS.get(rel, "#374151")
+        dash = ' stroke-dasharray="4 2"' if rel == "shares_topic" else ""
+        svg.append(
+            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}"'
+            f' stroke="{col}" stroke-width="1.2" opacity="0.45"{dash}/>'
+        )
+
+    # Nodes + labels
+    for n in nodes_list:
+        nid = n["id"]
+        if nid not in positions:
+            continue
+        x, y = positions[nid]
+        ntype = n.get("type", "stub")
+        col = COLORS.get(ntype, "#6b7280")
+        r = NODE_R.get(ntype, 5)
+        label = _xml_escape(n.get("label", "")[:30])
+
+        if ntype == "query":
+            svg.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r + 7}" fill="{col}" opacity="0.18"/>')
+        svg.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{col}" opacity="0.88"/>')
+
+        if ntype in ("query", "thought", "search") and label:
+            fs = 9 if ntype == "query" else 7.5 if ntype == "thought" else 7
+            fw = "bold" if ntype == "query" else "normal"
+            # Label below node unless too close to bottom edge
+            label_y = y + r + 12 if y < H - 28 else y - r - 4
+            anchor = "middle"
+            label_x = x
+            if x < 70:
+                anchor, label_x = "start", x - r + 2
+            elif x > W - 70:
+                anchor, label_x = "end", x + r - 2
+            svg.append(
+                f'<text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="{anchor}"'
+                f' font-size="{fs}" font-weight="{fw}" fill="#dde4f5">{label}</text>'
+            )
+
+    # Legend (top-left)
+    legend = [("query", "Query"), ("thought", "Reasoning"), ("search", "Search"), ("enriched", "Read page")]
+    for i, (t, lbl) in enumerate(legend):
+        lx, ly = 10, 10 + i * 20
+        col = COLORS[t]
+        nr = NODE_R[t]
+        svg.append(f'<circle cx="{lx + nr}" cy="{ly + nr}" r="{nr}" fill="{col}" opacity="0.85"/>')
+        svg.append(
+            f'<text x="{lx + nr * 2 + 6}" y="{ly + nr + 4}" font-size="7.5" fill="#9ca3af">{lbl}</text>'
+        )
+
+    svg.append("</svg>")
+    return "".join(svg)
 
 
 def _html_to_pdf(html: str) -> bytes:
@@ -1733,6 +2020,149 @@ async def report_tree(filename: str) -> dict:
     return {"tree": _build_research_tree(events, query=query)}
 
 
+def _build_mindmap(events: list[dict], query: str = "") -> dict:
+    """Build a force-directed mind map graph from stream events."""
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
+    edge_set: set[tuple] = set()
+
+    def _add_edge(src: str, tgt: str, relation: str) -> None:
+        key = (src, tgt, relation)
+        if key not in edge_set and src in nodes and tgt in nodes:
+            edge_set.add(key)
+            edges.append({"source": src, "target": tgt, "relation": relation})
+
+    # Root query node
+    root_id = "root"
+    nodes[root_id] = {"id": root_id, "type": "query",
+                      "label": (query[:60] + "…") if len(query) > 60 else query,
+                      "tooltip": query}
+
+    last_parent = root_id  # thought or root
+    last_search_id: str | None = None
+    url_nodes: dict[str, str] = {}   # url -> node_id
+    url_content: dict[str, str] = {} # url -> enriched content
+    search_idx = thought_idx = 0
+
+    for ev in events:
+        t = ev.get("type", "")
+
+        if t == "thought_node":
+            nid = f"thought:{thought_idx}"
+            thought_idx += 1
+            label = ev.get("label", "Thought")
+            rationale = ev.get("rationale", "")
+            nodes[nid] = {"id": nid, "type": "thought",
+                          "label": label[:45],
+                          "tooltip": rationale or label}
+            _add_edge(last_parent, nid, "led_to")
+            last_parent = nid
+
+        elif t == "search":
+            nid = f"search:{search_idx}"
+            search_idx += 1
+            q = ev.get("query", "")
+            nodes[nid] = {"id": nid, "type": "search",
+                          "label": (q[:45] + "…") if len(q) > 45 else q,
+                          "tooltip": q}
+            _add_edge(last_parent, nid, "led_to")
+            last_search_id = nid
+
+        elif t == "search_result" and last_search_id:
+            for r in ev.get("results", []):
+                url = r.get("url", "")
+                if not url:
+                    continue
+                nid = f"url:{url}"
+                if nid not in nodes:
+                    title = r.get("title", url)
+                    nodes[nid] = {
+                        "id": nid, "type": "stub",
+                        "label": (title[:40] + "…") if len(title) > 40 else title,
+                        "url": url,
+                        "title": r.get("title", ""),
+                        "category": r.get("category", ""),
+                        "tooltip": f"{r.get('category','')}\n{r.get('snippet','')[:200]}",
+                    }
+                    url_nodes[url] = nid
+                _add_edge(last_search_id, nid, "found_via")
+
+        elif t == "fetch":
+            url = ev.get("url", "")
+            nid = f"url:{url}"
+            if nid in nodes:
+                nodes[nid]["type"] = "enriched"
+            else:
+                nodes[nid] = {"id": nid, "type": "enriched",
+                               "label": url[:40], "url": url,
+                               "title": url, "category": ev.get("category", ""),
+                               "tooltip": "Fetched page"}
+                url_nodes[url] = nid
+
+        elif t == "note_add":
+            content = ev.get("content", "")
+            url = ""
+            key_facts = ""
+            relevance = ""
+            for line in content.splitlines():
+                if line.startswith("URL: ") and not url:
+                    url = line[5:].strip()
+                elif line.startswith("Key facts:"):
+                    key_facts = line[10:].strip()
+                elif line.startswith("Relevance:"):
+                    relevance = line[10:].strip()
+            if url:
+                nid = f"url:{url}"
+                if nid in nodes:
+                    snippet = (key_facts or content)[:300]
+                    nodes[nid]["tooltip"] = (
+                        f"{nodes[nid].get('title','')}\n"
+                        f"{nodes[nid].get('category','')}\n\n"
+                        f"{snippet}"
+                        + (f"\n\n{relevance}" if relevance else "")
+                    )
+                    url_content[url] = snippet
+
+    # Cross-link: searches that share a URL are topically connected
+    url_to_searches: dict[str, list[str]] = {}
+    for e in edges:
+        if e["relation"] == "found_via":
+            url = e["target"].replace("url:", "")
+            url_to_searches.setdefault(url, []).append(e["source"])
+
+    for url, searches in url_to_searches.items():
+        if len(searches) > 1:
+            for i in range(len(searches) - 1):
+                _add_edge(searches[i], searches[i + 1], "shares_topic")
+
+    return {"nodes": list(nodes.values()), "edges": edges}
+
+
+@app.get("/api/reports/{filename}/mindmap")
+async def report_mindmap(filename: str) -> dict:
+    """Build a mind map graph from the run's audit events."""
+    filename = Path(filename).name
+    f = _art_dir(filename) / "audit.jsonl"
+    if not f.exists():
+        raise HTTPException(status_code=404, detail="No audit log for this run.")
+    events: list[dict] = []
+    for line in f.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                events.append(_json.loads(line))
+            except _json.JSONDecodeError:
+                pass
+    query = ""
+    meta_f = _art_dir(filename) / "meta.json"
+    if meta_f.exists():
+        try:
+            query = _json.loads(meta_f.read_text(encoding="utf-8")).get("query", "")
+        except Exception:
+            pass
+    return {"mindmap": _build_mindmap(events, query=query)}
+
+
 # ── Settings & Discovery ───────────────────────────────────────────────────
 
 _ENV_FILE = BASE_DIR / ".env"
@@ -1946,6 +2376,36 @@ async def discover_endpoints() -> DiscoverResponse:
         ))
 
     return DiscoverResponse(endpoints=endpoints)
+
+
+@app.get("/api/memory", response_model=MemoryListResponse)
+async def list_memory() -> MemoryListResponse:
+    """Return all stored research memory insights, newest first."""
+    insights = _ls.get_all_insights(LEARNING_STORE_PATH)
+    return MemoryListResponse(insights=[MemoryInsight(**i) for i in insights], total=len(insights))
+
+
+@app.delete("/api/memory/{insight_id}")
+async def delete_memory(insight_id: str) -> dict:
+    """Delete a stored insight by id."""
+    if not _ls.delete_insight(insight_id, LEARNING_STORE_PATH):
+        raise HTTPException(status_code=404, detail=f"Insight '{insight_id}' not found.")
+    return {"deleted": insight_id}
+
+
+@app.patch("/api/memory/{insight_id}", response_model=MemoryInsight)
+async def update_memory(insight_id: str, body: MemoryUpdateRequest) -> MemoryInsight:
+    """Update mutable fields (lessons, tags, topic_domain, keywords) on a stored insight."""
+    changes = body.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="No fields to update.")
+    if not _ls.update_insight(insight_id, changes, LEARNING_STORE_PATH):
+        raise HTTPException(status_code=404, detail=f"Insight '{insight_id}' not found.")
+    all_insights = _ls.get_all_insights(LEARNING_STORE_PATH)
+    for ins in all_insights:
+        if ins.get("id") == insight_id:
+            return MemoryInsight(**ins)
+    raise HTTPException(status_code=404, detail=f"Insight '{insight_id}' not found.")
 
 
 @app.get("/health")

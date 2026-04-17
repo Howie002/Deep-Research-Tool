@@ -254,16 +254,147 @@ def _get_backend() -> SearchBackend:
 _http_session = requests.Session()
 _http_session.headers.update({
     "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Referer": "https://www.google.com/",
 })
 
 # Precompiled regex for collapsing blank lines in fetched page content
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
+
+# ── Trafilatura (optional, higher-quality extractor) ───────────────────────
+try:
+    import trafilatura as _trafilatura
+    _TRAFILATURA_OK = True
+except ImportError:
+    _trafilatura = None  # type: ignore[assignment]
+    _TRAFILATURA_OK = False
+
+# ── Gate / paywall detection ───────────────────────────────────────────────
+# Phrases that indicate a login wall or subscription gate.
+_GATE_RE = re.compile(
+    r"sign[\s-]?in to (view|continue|access|read)|log[\s-]?in (to|required)|login required|please log in"
+    r"|create an account|join (with email|linkedin|researchgate|academia)"
+    r"|subscription required|subscribe to (read|access|continue|view)"
+    r"|access denied|members only|purchase required|premium (content|access|article)"
+    r"|to continue reading|unlock this (article|content|page)"
+    r"|register (for free|to (read|access))|you (must|need to) sign in"
+    r"|this content is (for|only|behind|exclusively)"
+    r"|ieee account|change username|update address|purchase details"
+    r"|500\+ connections|2k followers|sign in to view.*full profile"
+    r"|already on linkedin|join linkedin|connect with professionals"
+    r"|researchgate.*sign up|academia\.edu.*sign up"
+    r"|by clicking continue.*agree|user agreement.*privacy policy",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_gated(text: str) -> bool:
+    """Return True when extracted text looks like a login wall or paywall."""
+    if len(text.strip()) < 300:
+        return True
+    hits = len(_GATE_RE.findall(text[:1200]))
+    return hits >= 2
+
+
+# ── Fetch helpers ──────────────────────────────────────────────────────────
+
+def _extract_bs4(html_bytes: bytes) -> str:
+    """Extract readable text from raw HTML using BeautifulSoup."""
+    soup = BeautifulSoup(html_bytes, "lxml")
+    for tag in soup(
+        ["script", "style", "nav", "footer", "header",
+         "aside", "form", "noscript", "iframe", "svg"]
+    ):
+        tag.decompose()
+    body = soup.find("article") or soup.find("main") or soup.body
+    raw = body.get_text(separator="\n", strip=True) if body else ""
+    return _BLANK_LINES_RE.sub("\n\n", raw).strip()
+
+
+def _extract_pdf(content_bytes: bytes, max_chars: int = 40_000) -> str | None:
+    """Extract plain text from a PDF byte string using pdfplumber.
+
+    Returns None on failure or if the result is empty / too short to be useful.
+    """
+    try:
+        import io
+        import pdfplumber
+        parts: list[str] = []
+        with pdfplumber.open(io.BytesIO(content_bytes)) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text(x_tolerance=2, y_tolerance=3) or ""
+                text = text.strip()
+                if text:
+                    parts.append(text)
+                if sum(len(p) for p in parts) >= max_chars:
+                    break
+        result = "\n\n".join(parts).strip()
+        return result if len(result) >= 100 else None
+    except Exception:
+        return None
+
+
+def _fetch_with_trafilatura(url: str) -> str | None:
+    """Fetch and extract via trafilatura — handles many paywalls and JS-heavy pages."""
+    if not _TRAFILATURA_OK:
+        return None
+    try:
+        downloaded = _trafilatura.fetch_url(url)
+        if not downloaded:
+            return None
+        text = _trafilatura.extract(
+            downloaded,
+            include_comments=False,
+            include_tables=True,
+            no_fallback=False,
+            favor_recall=True,
+        )
+        return text or None
+    except Exception:
+        return None
+
+
+def _fetch_wayback(url: str, limit: int) -> str | None:
+    """
+    Fall back to the Wayback Machine (archive.org) for gated or blocked pages.
+    Returns extracted text prefixed with the snapshot URL, or None if unavailable.
+    """
+    try:
+        avail = requests.get(
+            "https://archive.org/wayback/available",
+            params={"url": url},
+            timeout=8,
+        )
+        snapshot = avail.json().get("archived_snapshots", {}).get("closest", {})
+        if not snapshot.get("available"):
+            return None
+        snap_url = snapshot["url"]
+        resp = _http_session.get(snap_url, timeout=18)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.content, "lxml")
+        # Remove Wayback Machine toolbar injected into every page
+        for tag in soup.find_all(id=lambda i: i and "wm-ipp" in i):
+            tag.decompose()
+        text = _extract_bs4(resp.content)
+        if not text or len(text) < 200:
+            return None
+        if len(text) > limit:
+            text = text[:limit] + f"\n\n[... truncated at {limit} chars ...]"
+        return f"[Wayback Machine snapshot: {snap_url}]\n\n{text}"
+    except Exception:
+        return None
 
 
 # ── Fetched URL tracker ────────────────────────────────────────────────────
@@ -443,7 +574,12 @@ class WebSearchTool(BaseTool):
                 "query": query,
                 "count": len(results),
                 "results": [
-                    {"title": r.get("title", ""), "url": r.get("url", ""), "category": classify(r.get("url", ""))}
+                    {
+                        "title": r.get("title", ""),
+                        "url": r.get("url", ""),
+                        "category": classify(r.get("url", "")),
+                        "snippet": r.get("snippet", ""),
+                    }
                     for r in results[:8]
                 ],
             })
@@ -482,51 +618,86 @@ class FetchPageTool(BaseTool):
         category = classify(url)
         log(f"Reading page: {url}")
         _emit_stream({"type": "fetch", "url": url, "category": category})
-        try:
-            resp = _http_session.get(url, timeout=12)
-            resp.raise_for_status()
 
-            soup = BeautifulSoup(resp.content, "lxml")
+        limit = _budget.page_limit()
+        text: str | None = None
+        source_tag = ""
 
-            # Strip noisy elements
-            for tag in soup(
-                ["script", "style", "nav", "footer", "header",
-                 "aside", "form", "noscript", "iframe", "svg"]
-            ):
-                tag.decompose()
+        # ── Strategy 1: trafilatura (best at handling paywalls + JS pages) ──
+        text = _fetch_with_trafilatura(url)
+        if text and not _is_gated(text):
+            source_tag = "[trafilatura]"
+            log(f"trafilatura extracted {len(text)} chars from {url}")
+        else:
+            traf_text = text  # keep trafilatura output as last-resort fallback
 
-            # Prefer <article> or <main> if available
-            body = soup.find("article") or soup.find("main") or soup.body
-            raw = body.get_text(separator="\n", strip=True) if body else ""
+            # ── Strategy 2: direct requests + BeautifulSoup (or PDF) ─────
+            text = None
+            try:
+                resp = _http_session.get(url, timeout=14)
+                resp.raise_for_status()
+                content_type = resp.headers.get("Content-Type", "").lower()
+                is_pdf = "application/pdf" in content_type or resp.content[:5] == b"%PDF-"
+                if is_pdf:
+                    pdf_text = _extract_pdf(resp.content, max_chars=limit)
+                    if pdf_text:
+                        text = pdf_text
+                        source_tag = "[PDF]"
+                        log(f"PDF extracted {len(text)} chars from {url}")
+                    else:
+                        log(f"PDF extraction returned no text for {url}")
+                else:
+                    bs_text = _extract_bs4(resp.content)
+                    if bs_text and not _is_gated(bs_text):
+                        text = bs_text
+                        source_tag = ""
+                        log(f"BeautifulSoup extracted {len(text)} chars from {url}")
+                    elif bs_text:
+                        log(f"BeautifulSoup got gated content ({len(bs_text)} chars) for {url}")
+            except requests.HTTPError as exc:
+                log(f"HTTP error for {url}: {exc}")
+            except Exception as exc:
+                log(f"Request failed for {url}: {exc}")
 
-            # Collapse runs of blank lines
-            text = _BLANK_LINES_RE.sub("\n\n", raw).strip()
+            # ── Strategy 3: Wayback Machine fallback (HTML only) ─────────
+            # Skip Wayback for PDFs — it would serve the same binary file.
+            if not text or (not is_pdf and _is_gated(text)):
+                log(f"Trying Wayback Machine for {url}")
+                wb = _fetch_wayback(url, limit)
+                if wb and not _is_gated(wb):
+                    text = wb
+                    source_tag = "[Wayback Machine archive]"
+                    log(f"Wayback Machine returned {len(text)} chars for {url}")
+                else:
+                    # All strategies returned gated content — do NOT pass login walls to the LLM.
+                    # Returning an explicit error prevents the agent from writing notes on login pages.
+                    log(f"All strategies returned gated content for {url} — skipping")
+                    return (
+                        f"⚠ Gated/paywalled page — no content extracted: {url}\n"
+                        f"This page requires login or a subscription. "
+                        f"Skip this source and focus on other results."
+                    )
 
-            if not text:
-                return f"No readable content found at {url}"
+        if not text:
+            return f"No readable content found at {url}"
 
-            limit = _budget.page_limit()
-            if len(text) > limit:
-                reason = "context budget" if limit < MAX_PAGE_CONTENT_LENGTH else "page size limit"
-                text = text[:limit] + f"\n\n[... truncated at {limit} chars due to {reason} ...]"
+        if len(text) > limit:
+            reason = "context budget" if limit < MAX_PAGE_CONTENT_LENGTH else "page size limit"
+            text = text[:limit] + f"\n\n[... truncated at {limit} chars due to {reason} ...]"
 
-            _budget.record(len(text))
-            _fetched.mark(url)
-            _diversity.record(category)
+        _budget.record(len(text))
+        _fetched.mark(url)
+        _diversity.record(category)
 
-            # Emit a preview of the page content (first 400 chars of clean text)
-            preview = " ".join(text[:600].split())[:400]
-            _emit_stream({"type": "fetch_content", "url": url, "category": category, "preview": preview})
+        preview = " ".join(text[:600].split())[:400]
+        _emit_stream({"type": "fetch_content", "url": url, "category": category, "preview": preview})
 
-            footer = f"\n\nSource type: {category} | {_diversity.summary()}"
-            footer += _budget.warning()
-            footer += _diversity.nudge()
-            return f"Content from {url}:\n\n{text}" + footer
-
-        except requests.HTTPError as exc:
-            return f"HTTP error fetching {url}: {exc}"
-        except Exception as exc:
-            return f"Failed to fetch {url}: {exc}"
+        footer = f"\n\nSource type: {category} | {_diversity.summary()}"
+        if source_tag:
+            footer = f"\n\n{source_tag}" + footer
+        footer += _budget.warning()
+        footer += _diversity.nudge()
+        return f"Content from {url}:\n\n{text}" + footer
 
 
 # ── Plan / Notes / Draft tools ─────────────────────────────────────────────
