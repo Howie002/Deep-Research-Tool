@@ -31,6 +31,8 @@ def create_job(
     no_learn: bool = False,
     parent_report: str | None = None,
     gap_context: str | None = None,
+    depth: str = "medium",
+    thorough: bool = False,
 ) -> str:
     """Write a new job file and return the job_id."""
     job_id = str(uuid.uuid4())
@@ -39,6 +41,8 @@ def create_job(
         "query": query,
         "clarifications": clarifications,
         "no_learn": no_learn,
+        "depth": depth,
+        "thorough": thorough,
         "result": "",
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -324,6 +328,28 @@ def save_run(
             )
             (art_dir / "gaps.md").write_text(gap_md, encoding="utf-8")
 
+        # Copy grounding-validator output (if the worker produced one) into
+        # the artifacts directory so the UI/API can surface citation checks.
+        grounding_src = jobs_dir / f"{job_id}.grounding.json"
+        if grounding_src.exists():
+            try:
+                (art_dir / "grounding.json").write_text(
+                    grounding_src.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
+        # Copy the fetched-page content cache so the grounding results can
+        # be re-audited later without re-fetching every URL.
+        fetched_src = jobs_dir / f"{job_id}.fetched.jsonl"
+        if fetched_src.exists():
+            try:
+                (art_dir / "fetched.jsonl").write_text(
+                    fetched_src.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
         return prefix
 
     except Exception:
@@ -341,8 +367,9 @@ def save_run(
 
 
 def cleanup_job(job_id: str, jobs_dir: Path) -> None:
-    """Delete the job JSON, log, stream, and startup-marker files."""
-    for suffix in (".json", ".log", ".stream", ".started", ".tmp"):
+    """Delete the job JSON, log, stream, grounding, fetched-cache, and startup-marker files."""
+    for suffix in (".json", ".log", ".stream", ".started", ".tmp",
+                   ".grounding.json", ".fetched.jsonl"):
         try:
             (jobs_dir / f"{job_id}{suffix}").unlink()
         except FileNotFoundError:

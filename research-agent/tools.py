@@ -9,6 +9,7 @@ Search backends supported (configure via SEARCH_BACKEND env var):
 """
 from __future__ import annotations
 
+import json as _json
 import re
 import threading
 import time
@@ -25,11 +26,14 @@ from config import (
     BRAVE_API_KEY,
     CONTEXT_LIMIT_TOKENS,
     LANGSEARCH_API_KEY,
+    LM_STUDIO_BASE_URL,
+    LM_STUDIO_MODEL,
     MAX_PAGE_CONTENT_LENGTH,
     MAX_SEARCH_RESULTS,
     SEARCH_BACKEND,
     SEARCH_CACHE_TTL_SECONDS,
     SERPAPI_KEY,
+    THOROUGH_MODE,
 )
 from scratchpad import log
 from source_classifier import SourceDiversityTracker, classify
@@ -53,6 +57,180 @@ def _emit_stream(event: dict) -> None:
             _stream_emitter(event)
         except Exception:
             pass
+
+
+# ── Fetched-content persister ─────────────────────────────────────────────
+# The worker registers a callback that writes full-text fetches to a per-job
+# JSONL cache; grounding.py reads from this cache at post-synth time to
+# verify citations against what was actually fetched. Without this, only
+# 400-char previews are persisted (in stream events) which isn't enough to
+# ground claims.
+
+_fetch_persister = None              # fn(url, title, category, text)
+_subject_query: str | None = None    # set by worker; used by thorough-mode classifier
+_workspace_reader = None             # fn() -> dict, set by worker
+
+
+def set_fetch_persister(persist_fn) -> None:
+    global _fetch_persister
+    _fetch_persister = persist_fn
+
+
+def set_subject_query(query: str) -> None:
+    """Store the top-level research query so per-page classification can
+    judge 'does this page actually discuss the subject?' rather than just
+    'is this page relevant to the current sub-query?'."""
+    global _subject_query
+    _subject_query = (query or "").strip()
+
+
+def set_workspace_reader(reader_fn) -> None:
+    """Register a zero-arg callable that returns the current workspace state
+    as {"plan": str, "notes": [str], "draft": str, "sources": [str]}.
+    Used by ReadWorkspaceTool so downstream stages can get the canonical
+    research record even if the previous stage's handoff string was garbage.
+    """
+    global _workspace_reader
+    _workspace_reader = reader_fn
+
+
+def _persist_fetched(url: str, title: str, category: str, text: str) -> None:
+    if _fetch_persister:
+        try:
+            _fetch_persister(url, title, category, text)
+        except Exception:
+            pass
+
+# ── Thorough-mode classifier ───────────────────────────────────────────────
+# When THOROUGH_MODE is on, every search result is judged by a tight LLM
+# call: "would this page help answer <query>? yes/no + one-line reason".
+# Rejected URLs are dropped before the researcher ever sees them; verdicts
+# are streamed so the branch tree surfaces the full audit trail.
+
+_CLASSIFY_SYSTEM = (
+    "You judge whether a web search result is likely to help answer a specific research query. "
+    "Output STRICT JSON and nothing else: "
+    '{"verdict":"useful","reason":"<one short sentence>"} '
+    'OR {"verdict":"reject","reason":"<one short sentence>"}. '
+    "Be strict — if the title and snippet do not clearly indicate relevant primary information, say reject."
+)
+
+
+def _classify_usefulness(query: str, result: dict) -> dict:
+    """Return {"verdict": "useful"|"reject", "reason": str}. Never raises.
+
+    Fails *open* (useful, reason="verdict unavailable") if the classifier
+    can't be reached — better to let a run continue than block every search
+    because LM Studio glitched.
+    """
+    title = (result.get("title") or "").strip()[:300]
+    url = (result.get("url") or "").strip()[:500]
+    snippet = (result.get("snippet") or "").strip()[:600]
+    user = (
+        f"Research query: \"{query}\"\n\n"
+        f"Result:\n  Title: {title}\n  URL: {url}\n  Snippet: {snippet}\n\n"
+        "Is this result likely to help answer the query? Output only the JSON verdict."
+    )
+    payload = {
+        "model": LM_STUDIO_MODEL,
+        "messages": [
+            {"role": "system", "content": _CLASSIFY_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 120,
+    }
+    try:
+        resp = requests.post(
+            LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    except Exception:
+        return {"verdict": "useful", "reason": "verdict unavailable (classifier error)"}
+
+    # Strip fences, then try direct JSON; fall back to regex-extracted object.
+    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw, flags=re.IGNORECASE).strip()
+    parsed: dict | None = None
+    try:
+        parsed = _json.loads(cleaned)
+    except Exception:
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if m:
+            try:
+                parsed = _json.loads(m.group(0))
+            except Exception:
+                parsed = None
+    if not isinstance(parsed, dict):
+        return {"verdict": "useful", "reason": "verdict unavailable (parse failed)"}
+    verdict = str(parsed.get("verdict", "")).strip().lower()
+    reason = str(parsed.get("reason", "")).strip() or "no reason given"
+    if verdict not in ("useful", "reject"):
+        return {"verdict": "useful", "reason": f"verdict unavailable (got '{verdict}')"}
+    return {"verdict": verdict, "reason": reason[:300]}
+
+
+_PAGE_VERDICT_SYSTEM = (
+    "You audit whether a web page actually discusses a specific research subject. "
+    "Output STRICT JSON and nothing else: "
+    '{"verdict":"on_topic","reason":"<short sentence summarising what the page says about the subject>"} '
+    'OR {"verdict":"off_topic","reason":"<short sentence explaining what the page is about and why it does NOT discuss the subject>"}. '
+    "Be strict: topical adjacency is not enough — the page must contain information ABOUT the subject itself."
+)
+
+
+def _classify_page_about_subject(subject: str, url: str, page_text: str) -> dict:
+    """Does this fetched page actually discuss <subject>? Never raises; fails
+    open with 'on_topic' so a classifier glitch doesn't derail research."""
+    body = (page_text or "").strip()
+    if len(body) > 5000:
+        body = body[:5000] + "\n…[truncated for classifier]"
+    user = (
+        f"SUBJECT: {subject}\n\nURL: {url}\n\nPAGE CONTENT:\n{body}\n\n"
+        "Does this page contain information ABOUT the subject? Output only the JSON verdict."
+    )
+    payload = {
+        "model": LM_STUDIO_MODEL,
+        "messages": [
+            {"role": "system", "content": _PAGE_VERDICT_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 150,
+    }
+    try:
+        resp = requests.post(
+            LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=45,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    except Exception:
+        return {"verdict": "on_topic", "reason": "verdict unavailable (classifier error)"}
+
+    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw, flags=re.IGNORECASE).strip()
+    parsed: dict | None = None
+    try:
+        parsed = _json.loads(cleaned)
+    except Exception:
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if m:
+            try:
+                parsed = _json.loads(m.group(0))
+            except Exception:
+                parsed = None
+    if not isinstance(parsed, dict):
+        return {"verdict": "on_topic", "reason": "verdict unavailable (parse failed)"}
+    verdict = str(parsed.get("verdict", "")).strip().lower()
+    if verdict not in ("on_topic", "off_topic"):
+        return {"verdict": "on_topic", "reason": f"verdict unavailable (got '{verdict}')"}
+    return {"verdict": verdict, "reason": str(parsed.get("reason", "")).strip()[:300]}
+
 
 # ── Context budget tracker ─────────────────────────────────────────────────
 # Tracks cumulative content fetched per worker process and dynamically
@@ -569,6 +747,37 @@ class WebSearchTool(BaseTool):
             log(f"Found {len(results)} results for: \"{query}\""
                 + (f" ({skipped} already-fetched URLs removed)" if skipped else ""))
 
+            # Thorough mode: LLM-classify every result for usefulness before
+            # it reaches the researcher. Rejected URLs are dropped from the
+            # list entirely — the researcher cannot fetch them. Every verdict
+            # (accept AND reject) is streamed so the branch tree is complete.
+            verdicts: dict[str, dict] = {}
+            if THOROUGH_MODE and results:
+                log(f"Thorough mode: classifying {len(results)} result(s) for usefulness…")
+                kept: list[dict] = []
+                for r in results:
+                    v = _classify_usefulness(query, r)
+                    verdicts[r.get("url", "")] = v
+                    _emit_stream({
+                        "type": "resource_verdict",
+                        "query": query,
+                        "url": r.get("url", ""),
+                        "title": r.get("title", ""),
+                        "verdict": v["verdict"],
+                        "reason": v["reason"],
+                    })
+                    if v["verdict"] == "useful":
+                        kept.append(r)
+                dropped = len(results) - len(kept)
+                if dropped:
+                    log(f"Thorough mode: rejected {dropped} of {len(results)} result(s) as unlikely to help.")
+                results = kept
+                if not results:
+                    return (
+                        f"Search results for: '{query}'\n"
+                        "(all results were classified as unlikely to help — try a broader or differently-worded query)"
+                    )
+
             _emit_stream({
                 "type": "search_result",
                 "query": query,
@@ -590,6 +799,9 @@ class WebSearchTool(BaseTool):
                 lines.append(f"{i}. **{r['title'] or 'No title'}** {classify(url)}")
                 lines.append(f"   URL: {url}")
                 lines.append(f"   {r['snippet'] or 'No snippet available.'}")
+                verdict = verdicts.get(url)
+                if verdict:
+                    lines.append(f"   [Thorough verdict: USEFUL — {verdict['reason']}]")
                 lines.append("")
             return "\n".join(lines)
 
@@ -689,14 +901,42 @@ class FetchPageTool(BaseTool):
         _fetched.mark(url)
         _diversity.record(category)
 
+        # Persist the full extracted text to a per-job cache so the
+        # post-synth grounding validator can check whether citations to
+        # this URL are actually supported by the page content.
+        _persist_fetched(url, url, category, text)
+
         preview = " ".join(text[:600].split())[:400]
         _emit_stream({"type": "fetch_content", "url": url, "category": category, "preview": preview})
+
+        # Thorough mode (per-page): judge whether this page actually
+        # discusses the top-level research subject. If the classifier says
+        # no, we leave the content in the fetch cache (for audit trail)
+        # but tell the agent outright so it won't write notes off a page
+        # that doesn't discuss the subject. Fails open on classifier error.
+        verdict_footer = ""
+        if THOROUGH_MODE and _subject_query and text.strip():
+            page_verdict = _classify_page_about_subject(_subject_query, url, text)
+            _emit_stream({
+                "type": "page_verdict",
+                "url": url,
+                "subject": _subject_query,
+                "verdict": page_verdict["verdict"],
+                "reason": page_verdict["reason"],
+            })
+            if page_verdict["verdict"] == "off_topic":
+                verdict_footer = (
+                    f"\n\n⚠ THOROUGH-MODE PAGE VERDICT: This page does not appear to discuss "
+                    f"'{_subject_query}' ({page_verdict['reason']}). "
+                    "Do NOT write notes attributing claims about the subject to this page."
+                )
 
         footer = f"\n\nSource type: {category} | {_diversity.summary()}"
         if source_tag:
             footer = f"\n\n{source_tag}" + footer
         footer += _budget.warning()
         footer += _diversity.nudge()
+        footer += verdict_footer
         return f"Content from {url}:\n\n{text}" + footer
 
 
@@ -710,6 +950,14 @@ class _PlanInput(BaseModel):
 
 class _NoteInput(BaseModel):
     content: str = Field(description="A key finding, fact, or observation to record.")
+    source_url: str = Field(
+        default="",
+        description="The URL of the page this note was extracted from (must be a URL you actually fetched this run).",
+    )
+    quote: str = Field(
+        default="",
+        description="A short verbatim quote (under 300 chars) from the source page that supports this note. Required when citing a URL.",
+    )
 
 
 class _DraftInput(BaseModel):
@@ -739,8 +987,13 @@ class AddNoteTool(BaseTool):
     )
     args_schema: Type[BaseModel] = _NoteInput
 
-    def _run(self, content: str) -> str:
-        _emit_stream({"type": "note_add", "content": content})
+    def _run(self, content: str, source_url: str = "", quote: str = "") -> str:
+        event: dict = {"type": "note_add", "content": content}
+        if source_url:
+            event["source_url"] = source_url
+        if quote:
+            event["quote"] = quote[:600]
+        _emit_stream(event)
         return "Note recorded."
 
 
@@ -756,6 +1009,71 @@ class UpdateDraftTool(BaseTool):
     def _run(self, content: str) -> str:
         _emit_stream({"type": "draft_update", "content": content})
         return "Draft updated."
+
+
+# ── Workspace reader tool ─────────────────────────────────────────────────
+# Downstream agents (Critical Analyst, Gap Analyst, Synthesizer) can call
+# this to read the canonical research record the Researcher actually built,
+# regardless of whatever garbage the previous task's raw output string
+# contains. This is the belt to #1's braces: even if the stage handoff
+# passes degenerate text, the agent can request the workspace and recover.
+
+
+class _WorkspaceReadInput(BaseModel):
+    sections: str = Field(
+        default="plan,notes,draft,sources",
+        description="Comma-separated list of sections to read: plan, notes, draft, sources (default: all).",
+    )
+
+
+class ReadWorkspaceTool(BaseTool):
+    """Read the live research workspace (plan, notes, draft, sources)."""
+
+    name: str = "read_workspace"
+    description: str = (
+        "Read the current research workspace — the Researcher's plan, all recorded notes "
+        "with their source URLs, the working draft, and the list of confirmed-fetched sources. "
+        "ALWAYS call this at the start of your task to see what the Researcher actually found, "
+        "rather than relying solely on the prior stage's summary text (which may be truncated "
+        "or corrupted). Accepts a `sections` argument to limit output; default returns everything."
+    )
+    args_schema: Type[BaseModel] = _WorkspaceReadInput
+
+    def _run(self, sections: str = "plan,notes,draft,sources") -> str:
+        if not _workspace_reader:
+            return "Workspace reader not configured. The pipeline is running without persistent workspace access."
+        try:
+            ws = _workspace_reader() or {}
+        except Exception as exc:
+            return f"Workspace read failed: {exc}"
+
+        wanted = {s.strip().lower() for s in (sections or "").split(",") if s.strip()}
+        if not wanted:
+            wanted = {"plan", "notes", "draft", "sources"}
+
+        parts: list[str] = []
+        if "plan" in wanted:
+            plan = (ws.get("plan") or "").strip()
+            parts.append("## PLAN\n" + (plan or "_(no plan recorded yet)_"))
+        if "notes" in wanted:
+            notes = ws.get("notes") or []
+            if notes:
+                body = "\n\n".join(f"### Note {i + 1}\n{n}" for i, n in enumerate(notes))
+            else:
+                body = "_(no notes recorded yet)_"
+            parts.append("## NOTES\n" + body)
+        if "draft" in wanted:
+            draft = (ws.get("draft") or "").strip()
+            parts.append("## WORKING DRAFT\n" + (draft or "_(no draft yet)_"))
+        if "sources" in wanted:
+            sources = ws.get("sources") or []
+            if sources:
+                lines = [f"- {s}" for s in sources]
+                body = "\n".join(lines)
+            else:
+                body = "_(no sources confirmed-fetched)_"
+            parts.append("## FETCHED SOURCES (confirmed-read URLs only)\n" + body)
+        return "\n\n".join(parts)
 
 
 # ── Thought narration tool ─────────────────────────────────────────────────

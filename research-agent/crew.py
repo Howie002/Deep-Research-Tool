@@ -98,7 +98,13 @@ litellm.register_model({
 
 
 def _make_llm(temperature: float = 0.3) -> LLM:
-    """Return an LLM pointed at the local LM Studio server."""
+    """Return an LLM pointed at the local LM Studio server.
+
+    presence_penalty / frequency_penalty / repetition_penalty are set to
+    prevent decoding collapse — small local models (Gemma in particular)
+    are prone to emitting the same token until max_tokens runs out,
+    corrupting the stage-handoff string.
+    """
     return LLM(
         # The "openai/" prefix tells LiteLLM to use the OpenAI-compatible path
         model=f"openai/{LM_STUDIO_MODEL}",
@@ -106,7 +112,13 @@ def _make_llm(temperature: float = 0.3) -> LLM:
         api_key="lm-studio-local-no-key-needed",
         temperature=temperature,
         timeout=3600,
-        extra_body={"enable_thinking": False},
+        presence_penalty=0.1,
+        frequency_penalty=0.3,
+        extra_body={
+            "enable_thinking": False,
+            "repetition_penalty": 1.15,
+            "repeat_penalty": 1.15,
+        },
     )
 
 

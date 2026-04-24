@@ -32,3 +32,15 @@ MAX_PAGE_CONTENT_LENGTH: int = int(os.getenv("MAX_PAGE_CONTENT_LENGTH", "4000"))
 CONTEXT_LIMIT_TOKENS: int = int(os.getenv("CONTEXT_LIMIT_TOKENS", "256000"))
 SEARCH_CACHE_TTL_SECONDS: int = int(os.getenv("SEARCH_CACHE_TTL_SECONDS", "300"))
 JOB_TIMEOUT_SECONDS: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "10800"))
+
+# ── Depth presets ──────────────────────────────────────────────────────────
+# The preset table lives in depth_presets.py so the worker can consult it
+# BEFORE importing config — config reads MAX_SEARCH_RESULTS from env at
+# module-load, and the preset must already have written that env first.
+from depth_presets import DEPTH_PRESETS, DEFAULT_DEPTH  # re-export
+
+# Thorough mode: every URL the searcher surfaces is LLM-classified for
+# usefulness and emitted as a resource_verdict stream event. Auto-enabled
+# for depth=ultra; opt-in otherwise. Read via env so the subprocess
+# worker can flip it per-job.
+THOROUGH_MODE: bool = os.getenv("THOROUGH_MODE", "0") in ("1", "true", "True", "yes")

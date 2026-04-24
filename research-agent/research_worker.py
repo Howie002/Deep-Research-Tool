@@ -38,6 +38,147 @@ def _mark_failed(signum=None, frame=None) -> None:
         sys.exit(1)
 
 
+def _detect_degenerate_output(text: str) -> dict:
+    """Return {"degenerate": bool, "signal": str, "sample": str}.
+
+    Catches small-LLM decoding collapse. Three patterns:
+      A. Separator-joined token loop: "thess_thess_thess…" or "Corpus-Corpus-…"
+      B. Whitespace-separated word loop: 15+ identical consecutive tokens
+      C. Low vocabulary diversity in a non-trivially-long response
+    """
+    if not text:
+        return {"degenerate": False, "signal": "", "sample": ""}
+
+    import re as _re
+    m = _re.search(r"(\b[\w']{2,20})([\-_])(?:\1\2){8,}", text)
+    if m:
+        return {"degenerate": True, "signal": "token-loop", "sample": m.group(0)[:160]}
+
+    m = _re.search(r"(\b[\w']{2,20}\b)(?:\s+\1\b){14,}", text)
+    if m:
+        return {"degenerate": True, "signal": "word-loop", "sample": m.group(0)[:160]}
+
+    if len(text) > 400:
+        tokens = _re.findall(r"\b\w+\b", text.lower())
+        unique = set(tokens)
+        if tokens and len(unique) < 20 and len(tokens) / max(1, len(unique)) > 8:
+            return {"degenerate": True, "signal": "low-vocab", "sample": text[:160]}
+
+    return {"degenerate": False, "signal": "", "sample": ""}
+
+
+def _build_grounding_appendix(gr) -> str:
+    """Render a markdown appendix summarising the grounding validator results.
+
+    gr is a grounding.GroundingReport; kept untyped here to avoid importing
+    that module at worker-top scope (it pulls in LLM bits we don't need
+    before env is set)."""
+    tier_badge = {
+        "high":      "🟢 HIGH",
+        "medium":    "🟡 MEDIUM",
+        "low":       "🟠 LOW",
+        "very_low":  "🔴 VERY LOW",
+    }.get(gr.confidence_tier, gr.confidence_tier.upper())
+
+    lines: list[str] = ["---", "", "## Grounding Audit",
+        f"**Computed confidence:** {tier_badge}  (score {gr.confidence_score})",
+        "",
+        "This section is generated mechanically after synthesis. It replaces the "
+        "synthesizer's self-asserted confidence labels — which measure prose "
+        "consistency, not source support — with checks against the pages actually "
+        "fetched during this run.",
+        "",
+    ]
+
+    # Pipeline corruption (runtime + structural). Placed first because it
+    # indicates the report body may not reflect the research that was done.
+    if getattr(gr, "pipeline_corrupted", False):
+        lines.append("### 🛑 Pipeline corruption detected")
+        lines.append("One or more pipeline stages produced degenerate output or lost context. "
+                     "The final report may not reflect the findings in the workspace — check "
+                     "`notes.md` and `fetched.jsonl` for the canonical research record.")
+        for flag in getattr(gr, "corruption_flags", []) or []:
+            agent = flag.get("agent") or "pipeline"
+            signal = flag.get("signal") or "unknown"
+            sample = (flag.get("sample") or "").replace("\n", " ")[:200]
+            lines.append(f"- **{agent}** — {signal}")
+            if sample:
+                lines.append(f"    - `{sample}`")
+        lines.append("")
+
+    # Ghost citations
+    if gr.ghost_urls:
+        lines.append(f"### ⚠ Ghost citations ({len(gr.ghost_urls)})")
+        lines.append("URLs cited in the report that were NOT fetched during this run. "
+                     "These may be fabricated or remembered from training data.")
+        for u in gr.ghost_urls:
+            lines.append(f"- {u}")
+        lines.append("")
+
+    # Dead URLs
+    if gr.dead_urls:
+        lines.append(f"### ⚠ Dead or unreachable URLs ({len(gr.dead_urls)})")
+        for u in gr.dead_urls:
+            lines.append(f"- {u}")
+        lines.append("")
+
+    # Citation verdicts
+    if gr.citation_verdicts:
+        supported = [v for v in gr.citation_verdicts if v.supported]
+        unsupported = [v for v in gr.citation_verdicts if not v.supported]
+        lines.append(f"### Per-citation grounding ({len(supported)}/{len(gr.citation_verdicts)} supported)")
+        if unsupported:
+            lines.append("")
+            lines.append("**Unsupported citations** — the cited page does not contain evidence for the claim it's attached to:")
+            for v in unsupported:
+                reason = v.reason or "no reason given"
+                lines.append(f"- {v.url} — {reason}")
+        if supported:
+            lines.append("")
+            lines.append(f"{len(supported)} other citations passed grounding check.")
+        lines.append("")
+
+    # Quote matches (#4)
+    if gr.quote_matches:
+        ok = sum(1 for q in gr.quote_matches if q.get("matched"))
+        lines.append(f"### Quote verification ({ok}/{len(gr.quote_matches)} quotes found verbatim on the cited page)")
+        for q in gr.quote_matches:
+            badge = "✓" if q.get("matched") else "✗"
+            lines.append(f"- {badge} {q.get('url','')} — \"{q.get('quote','')}\"")
+            if not q.get("matched") and q.get("reason"):
+                lines.append(f"    - {q['reason']}")
+        lines.append("")
+
+    # Thin profile
+    if gr.thin_profile:
+        lines.append("### ⚠ Thin-profile warning")
+        lines.append(
+            f"The subject appears in only **{gr.thin_profile_mention_count}** fetched page(s). "
+            "When public information is this sparse, models tend to fabricate plausible-sounding prose to "
+            "fill the gap. Treat any assertion above that lacks a ✓ supported citation with skepticism."
+        )
+        lines.append("")
+
+    # Disambiguation candidates (#8)
+    if gr.disambiguation_candidates:
+        lines.append(f"### Name collisions found in fetched content ({len(gr.disambiguation_candidates)})")
+        lines.append("These name-like strings share tokens with the subject but aren't an exact match. "
+                     "They may be distinct individuals or organisations that could be conflated.")
+        for cand in gr.disambiguation_candidates:
+            excerpt = cand.get("excerpt", "")
+            lines.append(f"- **{cand.get('name', '')}** — {cand.get('source_url', '')}")
+            if excerpt:
+                lines.append(f"    - _…{excerpt}…_")
+        lines.append("")
+
+    if not (gr.ghost_urls or gr.dead_urls or gr.citation_verdicts or gr.thin_profile
+            or gr.disambiguation_candidates or getattr(gr, "pipeline_corrupted", False)):
+        lines.append("_No issues detected — every cited URL was fetched this run and all sampled citations were supported._")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def _read_checkpoint_from_stream(stream_file: Path) -> dict:
     """
     Parse an existing .stream file and reconstruct checkpoint state for resume.
@@ -124,6 +265,8 @@ def main() -> None:
         no_learn = data.get("no_learn", False)
         _parent_report = data.get("parent_report", "")
         _gap_context   = data.get("gap_context", "")
+        _depth         = str(data.get("depth", "medium")).lower()
+        _thorough      = bool(data.get("thorough", False))
     except Exception as exc:
         job_file.write_text(
             json.dumps({"status": "error", "query": "", "log": [], "result": f"Failed to read job file: {exc}"}),
@@ -131,12 +274,39 @@ def main() -> None:
         )
         sys.exit(1)
 
+    # Apply the depth preset BEFORE importing tools/config modules so
+    # MAX_SEARCH_RESULTS and THOROUGH_MODE are picked up when they first
+    # read os.environ. Unknown presets fall back to "medium".
+    from depth_presets import resolve as _resolve_preset
+    _preset = _resolve_preset(_depth)
+    os.environ["MAX_SEARCH_RESULTS"] = str(_preset["search_results"])
+    os.environ["THOROUGH_MODE"] = "1" if _thorough else "0"
+
     from scratchpad import Scratchpad
     import tools as _tools_module
+    import grounding as _grounding
     _scratchpad = Scratchpad(job_id, jobs_dir)
     log = _scratchpad.log
     # Wire tools to the stream file for this job
     _tools_module.set_stream_emitter(_scratchpad.stream_event)
+    # Persist full fetched-page text so the grounding validator can verify
+    # claims against source content at post-synth time (400-char previews
+    # in stream events aren't enough).
+    _tools_module.set_fetch_persister(
+        lambda url, title, category, text: _grounding.append_fetched(
+            jobs_dir, job_id, url, title, category, text
+        )
+    )
+    # The thorough-mode per-page classifier needs to know the top-level
+    # research subject (not just the current sub-query) to decide whether
+    # a fetched page actually discusses the subject.
+    _tools_module.set_subject_query(query)
+    # Let ReadWorkspaceTool read the live plan/notes/draft/sources so
+    # downstream stages can recover canonical research even if a previous
+    # stage's handoff string was corrupted.
+    _tools_module.set_workspace_reader(
+        lambda: _grounding.load_workspace_state(jobs_dir, job_id)
+    )
 
     try:
         # Load relevant past insights from the learning store (if any)
@@ -154,7 +324,7 @@ def main() -> None:
             # Import here to avoid circular issues; stages are logged via crew callbacks below
             from crewai import Crew, Task, Agent, Process, LLM
             from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
-            from tools import AddNoteTool, FetchPageTool, ThoughtNodeTool, UpdateDraftTool, UpdatePlanTool, WebSearchTool, classify
+            from tools import AddNoteTool, FetchPageTool, ReadWorkspaceTool, ThoughtNodeTool, UpdateDraftTool, UpdatePlanTool, WebSearchTool, classify
             import litellm, re, os
 
             os.environ.setdefault("OPENAI_API_KEY", "lm-studio-local-no-key-needed")
@@ -211,6 +381,10 @@ def main() -> None:
             litellm.acompletion = _patched_acompletion
 
             def _make_llm(temperature=0.3, max_tokens=4096):
+                # Small local models (Gemma etc.) are prone to decoding
+                # collapse — repeating the same token until max_tokens runs
+                # out, corrupting the stage-handoff string. repetition_penalty
+                # and presence_penalty make collapse far less likely.
                 return LLM(
                     model=f"openai/{LM_STUDIO_MODEL}",
                     base_url=LM_STUDIO_BASE_URL,
@@ -218,7 +392,15 @@ def main() -> None:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     timeout=600,
-                    extra_body={"enable_thinking": False},
+                    presence_penalty=0.1,
+                    frequency_penalty=0.3,
+                    extra_body={
+                        "enable_thinking": False,
+                        # LM Studio exposes repetition_penalty via extra_body
+                        # (LiteLLM's top-level arg maps to frequency_penalty).
+                        "repetition_penalty": 1.15,
+                        "repeat_penalty": 1.15,  # alias some runtimes use
+                    },
                 )
 
             llm = _make_llm()
@@ -228,9 +410,11 @@ def main() -> None:
             note_tool     = AddNoteTool()
             draft_tool    = UpdateDraftTool()
             thought_tool  = ThoughtNodeTool()
+            workspace_tool = ReadWorkspaceTool()
 
             _current_agent: list[str] = [""]  # mutable container for step_callback closure
             _stream_line_cursor: list[int] = [0]  # tracks stream file position between stages
+            _corruption_flags: list[dict] = []  # populated by _stage_callback when decoding collapse is detected
 
             # Build optional clarification block injected into all task prompts
             _CLARIF_BLOCK = ""
@@ -494,7 +678,7 @@ def main() -> None:
                 goal="Comprehensively gather information about '{query}' by searching the web from multiple angles and reading the most relevant pages.",
                 backstory="You are a senior research analyst with a talent for finding the most relevant, credible sources on any topic. You formulate diverse search queries, identify authoritative sources, and extract key facts with their URLs. You never rely on a single source.",
                 tools=[search_tool, fetch_tool, plan_tool, note_tool, draft_tool, thought_tool],
-                llm=llm, verbose=verbose, allow_delegation=False, max_iter=10, max_rpm=10,
+                llm=llm, verbose=verbose, allow_delegation=False, max_iter=_preset["researcher_iter"], max_rpm=10,
             )
             analyst = Agent(
                 role="Critical Analyst & Fact-Checker",
@@ -512,8 +696,8 @@ def main() -> None:
                     "you actively search for corroborating [Academic], [Government], or "
                     "[Non-profit/NGO] sources before drawing conclusions."
                 ),
-                tools=[search_tool, fetch_tool, note_tool, draft_tool],
-                llm=llm, verbose=verbose, allow_delegation=False, max_iter=6, max_rpm=10,
+                tools=[search_tool, fetch_tool, note_tool, draft_tool, workspace_tool],
+                llm=llm, verbose=verbose, allow_delegation=False, max_iter=_preset["analyst_iter"], max_rpm=10,
             )
             gap_analyst = Agent(
                 role="Gap Analyst",
@@ -526,15 +710,31 @@ def main() -> None:
                     "You are explicit: each gap is labelled RESOLVED, PARTIALLY RESOLVED, or STILL OPEN. "
                     "You always close your response with exactly: STILL OPEN: N  (N = integer count)"
                 ),
-                tools=[note_tool],
-                llm=llm, verbose=verbose, allow_delegation=False, max_iter=4, max_rpm=10,
+                tools=[note_tool, workspace_tool],
+                llm=llm, verbose=verbose, allow_delegation=False, max_iter=max(4, _preset["analyst_iter"] // 2), max_rpm=10,
             )
             synthesizer = Agent(
                 role="Report Synthesizer",
                 goal="Produce a clear, well-structured, fully cited Markdown report that directly answers the research query.",
-                backstory="You are a professional technical writer and editor. You excel at turning raw research into structured, readable reports. You cite every claim, note confidence levels inline, and organise information so readers can trust and act on it immediately.",
-                tools=[draft_tool],
-                llm=_make_llm(temperature=0.5), verbose=verbose, allow_delegation=False, max_iter=6, max_rpm=10,
+                backstory=(
+                    "You are a professional technical writer and editor. You excel at turning raw research into "
+                    "structured, readable reports. You cite every claim and organise information so readers can trust "
+                    "and act on it immediately.\n\n"
+                    "HARD RULES YOU MUST FOLLOW (a post-synthesis validator will check these and flag violations):\n"
+                    "  1. You may cite ONLY URLs that appear in the run's fetched-URL log. If a URL was not fetched "
+                    "     during this run, you MUST NOT include it — no matter how well-known the source is. "
+                    "     Inventing a URL is a citation failure.\n"
+                    "  2. For every claim with a citation, the cited page must CONTAIN the claim. Topical relevance "
+                    "     alone does not count as support. If no fetched page supports a claim, DROP the claim. Do "
+                    "     not attach a nearby URL just because it's on the same topic.\n"
+                    "  3. Do NOT assert subjective confidence levels (e.g. 'High confidence', 'VERIFIED'). A mechanical "
+                    "     scorer will compute the report's confidence from citation-grounding results — your asserted "
+                    "     confidence will be ignored and may be flagged as unsupported.\n"
+                    "  4. If the evidence is thin or only available from an aggregator (ZoomInfo, SignalHire, LinkedIn "
+                    "     snippets), SAY SO explicitly. A short, honest report beats a confident long one."
+                ),
+                tools=[draft_tool, workspace_tool],
+                llm=_make_llm(temperature=0.5), verbose=verbose, allow_delegation=False, max_iter=_preset["synth_iter"], max_rpm=10,
             )
 
             def _stage_callback(output):
@@ -544,6 +744,30 @@ def main() -> None:
                     or ""
                 ).strip()
                 agent_role = getattr(output, "agent", "") or ""
+
+                # Degenerate-output detection: warn when a stage's handoff
+                # string falls into a decoding loop (e.g. "thess_thess…"),
+                # so the UI can badge it and the grounding pass can weight
+                # downstream skepticism. Also sets a flag the worker reads
+                # before save_run, so the user sees it in the report header.
+                _dg = _detect_degenerate_output(raw_text)
+                if _dg["degenerate"]:
+                    _corruption_flags.append({
+                        "agent": agent_role,
+                        "signal": _dg["signal"],
+                        "sample": _dg["sample"],
+                    })
+                    _scratchpad.stream_event({
+                        "type": "stage_collapse",
+                        "agent": agent_role,
+                        "signal": _dg["signal"],
+                        "sample": _dg["sample"],
+                    })
+                    log(
+                        f"⚠ {agent_role}: output shows {_dg['signal']} — downstream "
+                        "stages will fall back to workspace content (notes/plan/draft).",
+                        agent=agent_role,
+                    )
                 if "Research Specialist" in agent_role:
                     _scratchpad.stream_event({"type": "stage_complete", "stage": 1, "output": raw_text[:4000]})
                     _enforce_tool_calls(raw_text, stage=1)
@@ -645,9 +869,16 @@ def main() -> None:
             )
             verification_task = Task(
                 description=(
-                    f"Review the research findings above and verify the key claims.{_CLARIF_BLOCK}\n"
+                    f"Review the research findings and verify the key claims.{_CLARIF_BLOCK}\n\n"
+                    "IMPORTANT: The summary text immediately above (the prior task's output) is a convenience snapshot. "
+                    "The CANONICAL research record lives in the workspace (the Researcher's recorded notes, plan, draft, "
+                    "and confirmed-fetched sources). Small local models occasionally emit degenerate repetitive text at "
+                    "stage boundaries — if the summary above looks garbled, truncated, or low-information, TRUST THE "
+                    "WORKSPACE OVER IT.\n\n"
+                    "STEP 0 — READ WORKSPACE (REQUIRED FIRST ACTION): Call read_workspace to see the Researcher's full "
+                    "notes, plan, and sources. Work from the workspace, not from the prior summary.\n\n"
                     "You MUST use tools in this sequence:\n\n"
-                    "STEP 1 — IDENTIFY: Pick the 5 most important claims from the research.\n\n"
+                    "STEP 1 — IDENTIFY: Pick the 5 most important claims from the workspace notes.\n\n"
                     "STEP 2 — VERIFY (REQUIRED): For each claim, run at least one independent "
                     "web_search and call fetch_webpage on the most authoritative result found. "
                     "Actively seek a higher-tier source than what the researcher used — prefer "
@@ -673,7 +904,14 @@ def main() -> None:
             )
             gap_id_task = Task(
                 description=(
-                    f"Review the analyst's verification findings above for query: '{q}'\n{_CLARIF_BLOCK}\n"
+                    f"Review the analyst's verification findings for query: '{q}'\n{_CLARIF_BLOCK}\n\n"
+                    "IMPORTANT: The prior task's summary above is a convenience snapshot, not ground truth. "
+                    "The CANONICAL record is the workspace — all notes (research + verification), the plan, "
+                    "the confirmed-fetched sources, and the working draft. If the summary above looks garbled "
+                    "or low-information, trust the workspace over it.\n\n"
+                    "STEP 0 — READ WORKSPACE (REQUIRED FIRST ACTION): Call read_workspace to see the full "
+                    "record of what's been found and verified. Identify gaps against that, not against the "
+                    "prior summary.\n\n"
                     "ANALYTICAL ONLY — do not run searches. Read what has been found and identify gaps.\n\n"
                     "STEP 1 — IDENTIFY GAPS: List 2–4 important gaps:\n"
                     "  - Unanswered questions raised by the research\n"
@@ -697,7 +935,16 @@ def main() -> None:
             )
             synthesis_task = Task(
                 description=(
-                    f"Write the final research report answering: '{q}'\n{_CLARIF_BLOCK}{_MEMORY_BLOCK}\n"
+                    f"Write the final research report answering: '{q}'\n{_CLARIF_BLOCK}{_MEMORY_BLOCK}\n\n"
+                    "IMPORTANT: Do not rely on the prior stage's summary text above — it may be a truncated "
+                    "or corrupted snapshot. Your source of truth is the workspace: the Researcher's notes "
+                    "(with source URLs), the confirmed-fetched source list, the Analyst's verification notes, "
+                    "and the Gap Analyst's open-gap list.\n\n"
+                    "STEP 0 — READ WORKSPACE (REQUIRED FIRST ACTION): Call read_workspace BEFORE writing a "
+                    "single sentence. Every factual claim you make must trace back to a note or source URL "
+                    "you saw in the workspace. If the workspace shows notes and sources but the prior summary "
+                    "above says 'no information available', that is pipeline corruption — WRITE THE REPORT "
+                    "FROM THE WORKSPACE, not from the prior summary.\n\n"
                     "OUTPUT RULES: Markdown prose only — no JSON, no code blocks. "
                     "First line MUST be '## Summary' with no text before it. "
                     "Cite every factual claim with its source URL in parentheses.\n\n"
@@ -894,7 +1141,7 @@ def main() -> None:
             except Exception:
                 pass
 
-        result = _instrumented_run(
+        result_raw = _instrumented_run(
             query,
             clarifications=clarifications,
             memory_insights=_memory_insights,
@@ -905,7 +1152,94 @@ def main() -> None:
         from tools import _search_cache
         stats = _search_cache._cache_stats()
         log(f"Search cache stats — hits: {stats['hits']}, misses: {stats['misses']}")
-        log("Pipeline complete — report ready.", agent="Report Synthesizer")
+        log("Pipeline complete — running citation-grounding validator…", agent="Report Synthesizer")
+
+        # ── Post-synth grounding pass (fixes #1, #2, #3, #4, #5, #7) ──────
+        result = result_raw
+        try:
+            _fetched_cache = _grounding.load_fetched(jobs_dir, job_id)
+
+            # Extract a plausible proper-noun subject for thin-profile
+            # detection. For queries like "Research David Riggs who works
+            # for the Texas A&M Foundation" this pulls "David Riggs".
+            import re as _re
+            _m = _re.search(
+                r"(?:Research|Find|Look up|Tell me about|Who is|About|research)\s+"
+                r"([A-Z][\w&.'-]*(?:\s+[A-Z][\w&.'-]*)+)",
+                query,
+            )
+            _subject = _m.group(1) if _m else ""
+
+            # Collect notes that came with both a source_url and a quote
+            # (for quote-matching validation, #4).
+            _stream_file = jobs_dir / f"{job_id}.stream"
+            _notes_with_quotes: list[dict] = []
+            if _stream_file.exists():
+                for _line in _stream_file.read_text(encoding="utf-8").splitlines():
+                    _line = _line.strip()
+                    if not _line:
+                        continue
+                    try:
+                        _ev = json.loads(_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if _ev.get("type") == "note_add" and _ev.get("quote") and _ev.get("source_url"):
+                        _notes_with_quotes.append({
+                            "url": _ev["source_url"],
+                            "quote": _ev["quote"],
+                        })
+
+            # Count notes to feed the structural "notes exist but zero
+            # citations" corruption heuristic.
+            _note_count = 0
+            if _stream_file.exists():
+                for _line in _stream_file.read_text(encoding="utf-8").splitlines():
+                    if '"type": "note_add"' in _line or '"type":"note_add"' in _line:
+                        _note_count += 1
+
+            _gr = _grounding.run_all(
+                report=result_raw,
+                fetched_cache=_fetched_cache,
+                query=query,
+                subject=_subject,
+                notes_with_quotes=_notes_with_quotes,
+                corruption_flags=_corruption_flags,
+                note_count=_note_count,
+            )
+
+            (jobs_dir / f"{job_id}.grounding.json").write_text(
+                json.dumps(_gr.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            # Build a Grounding Audit appendix and attach it to the report
+            # so the reader sees verdict/confidence right alongside the prose.
+            result = (_gr.cleaned_report or result_raw) + "\n\n" + _build_grounding_appendix(_gr)
+
+            _scratchpad.stream_event({
+                "type": "grounding",
+                "confidence_tier": _gr.confidence_tier,
+                "confidence_score": _gr.confidence_score,
+                "thin_profile": _gr.thin_profile,
+                "mention_count": _gr.thin_profile_mention_count,
+                "ghost_urls_count": len(_gr.ghost_urls),
+                "dead_urls_count": len(_gr.dead_urls),
+                "unsupported_count": sum(1 for v in _gr.citation_verdicts if not v.supported),
+                "total_verified": len(_gr.citation_verdicts),
+                "pipeline_corrupted": _gr.pipeline_corrupted,
+                "corruption_signals": [f.get("signal", "") for f in _gr.corruption_flags],
+            })
+            log(
+                f"Grounding: confidence={_gr.confidence_tier} "
+                f"({_gr.confidence_score}), ghosts={len(_gr.ghost_urls)}, "
+                f"dead={len(_gr.dead_urls)}, "
+                f"unsupported={sum(1 for v in _gr.citation_verdicts if not v.supported)}/"
+                f"{len(_gr.citation_verdicts)}"
+            )
+        except Exception as _ge:
+            log(f"Grounding validator failed (run saved without grounding pass): {_ge}")
+
+        log("Report ready.", agent="Report Synthesizer")
         _scratchpad.stream_event({"type": "done", "status": "complete", "result": result})
 
         # Read current job data to preserve the log, then write final result

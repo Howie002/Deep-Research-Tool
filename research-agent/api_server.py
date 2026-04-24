@@ -28,7 +28,7 @@ import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Literal, Optional
 
 import httpx
 import uvicorn
@@ -122,6 +122,14 @@ class JobCreateRequest(BaseModel):
     no_learn: bool = Field(default=False, description="When true, this run is excluded from the learning store.")
     parent_report: Optional[str] = Field(default=None, description="Filename of the parent report (gap-fill continuation runs).")
     gap_context: Optional[str] = Field(default=None, max_length=8000, description="Gap analysis text from the parent run to focus on.")
+    depth: Literal["light", "medium", "heavy", "ultra"] = Field(
+        default="medium",
+        description="Depth preset controlling search breadth, agent iterations, and gap passes.",
+    )
+    thorough: bool = Field(
+        default=False,
+        description="Force an LLM usefulness verdict on every search result. Auto-enabled when depth='ultra'.",
+    )
 
 
 class JobCreateResponse(BaseModel):
@@ -395,12 +403,17 @@ async def start_job(request: Request, body: JobCreateRequest) -> JobCreateRespon
     if existing:
         return JobCreateResponse(job_id=existing)
 
+    # Ultra preset always runs in Thorough mode — the two are paired by design.
+    thorough = body.thorough or body.depth == "ultra"
+
     job_id = _create_job(
         query, JOBS_DIR,
         clarifications=body.clarifications,
         no_learn=body.no_learn,
         parent_report=body.parent_report,
         gap_context=body.gap_context,
+        depth=body.depth,
+        thorough=thorough,
     )
     try:
         launch_worker(job_id, JOBS_DIR, WORKER_SCRIPT)

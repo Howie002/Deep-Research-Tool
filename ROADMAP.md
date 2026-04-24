@@ -24,6 +24,66 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
   - Questions are generated in parallel with any other pre-flight work so they're ready by the time the modal opens
   - Fallback: if the LLM call fails or times out (>5s), the modal falls back to the current static questions silently
 
+### Depth Presets (Light / Medium / Heavy / Ultra)
+- `[ ]` **Replace scattered depth knobs with a single 4-button preset on the query form** — today a run's intensity is governed by `MAX_SEARCH_RESULTS`, `MAX_GAP_PASSES`, and three separate `max_iter` values in `crew.py`; users shouldn't have to tune four numbers
+  - Segmented control on the query form: **Light · Medium · Heavy · Ultra** — Medium is the default and matches today's behaviour
+  - Each preset is a bundle of knobs: search results per query, researcher/analyst/synthesizer `max_iter`, and gap-analysis passes
+  - Suggested mapping (tune after real-run data): Light = 3 / 5 iter / 0 gap passes; Medium = 5 / 10 / 2; Heavy = 10 / 20 / 3; Ultra = 20 / 40 / 5
+  - `POST /api/jobs` accepts `depth: "light" | "medium" | "heavy" | "ultra"`; the worker maps it to env vars and agent settings before the crew is constructed
+  - Preset label shown in the run header and the exported report so later readers know which tier produced a given report
+
+### Thorough Mode (Read Every Resource, Confirm or Deny Usefulness)
+- `[ ]` **Per-run "Thorough" toggle that forces the agent to evaluate every resource it surfaces** — today the researcher can silently skip URLs it doesn't like, producing opaque gaps in the branch tree
+  - New toggle on the query form: **Thorough read** (automatically enabled when Ultra preset is selected; otherwise opt-in)
+  - When active, `WebSearchTool` no longer returns raw results — for every URL it calls a tight LLM classifier: *"Would this page help answer `<query>`? Answer yes/no in one sentence + one-line reason."*
+  - The branch tree receives `resource_verdict` stream events `{url, title, verdict: "useful" | "reject", reason}` — rejected URLs render as dimmed nodes with the rejection reason on hover, so nothing is invisible
+  - Researcher is still free to skip a `useful` URL, but has to justify it (reason captured in the reasoning trail); `reject` URLs are hard-blocked from fetch
+  - Tradeoff: ~2–5× runtime since every result gets an LLM pass — surfaced in the preset label on the run header
+
+### Second-Pass Gap Verification
+- `[ ]` **Optional second full-run pass after the report is drafted** — re-runs the gap-analysis loop against the finished draft to confirm/deny the conclusions and close any remaining gaps
+  - New toggle on the query form: **Second pass** (off by default; auto-enabled at Ultra)
+  - After synthesis completes, the worker re-invokes the Gap Analyst against the draft + notes + gaps artifacts; newly-identified gaps trigger an additional Researcher → Analyst → Synthesis cycle
+  - Distinct from the in-run gap loop (`MAX_GAP_PASSES`) — that runs before synthesis; this runs *after* the draft exists, so it can verify actual conclusions, not just notes
+  - The second pass appends — it does not overwrite the original draft; the report header shows "Revised after second-pass verification" and the diff is viewable as an artifact
+  - Hard-capped at one second pass per run to prevent runaway loops
+
+### Configuration Page — Custom Research Profiles
+- `[ ]` **Settings page for reusable research profiles that pre-configure plan, required sources, and output format** — power users doing the same kind of research repeatedly (donor prospect, academic literature review, competitive analysis) shouldn't have to re-specify everything each time
+  - New **Profiles** tab in Settings: list of saved profiles, each with a name, description, and the fields below
+  - **Custom research plan template**: a markdown checklist the researcher starts from instead of generating a plan from scratch (e.g. a "Donor Prospect" profile seeds steps like "[ ] Employment history, [ ] Philanthropic record, [ ] Board memberships, [ ] Recent public statements")
+  - **Required lookup sites**: a list of domains the researcher MUST search against before finishing (e.g. SEC EDGAR, Guidestar, university gift registries) — enforced as `site:` searches before the run can complete
+  - **Output format**: report structure template (sections, required headings, length cap) and optional export-preset defaults (PDF / Markdown / JSON)
+  - Query form: a **Profile** dropdown picks from saved profiles; selecting one pre-fills the query form and overrides generated plan/clarifications; "None" preserves today's behaviour
+  - Profiles persist in `settings.json` and are shareable as JSON import/export so teams can standardise research processes
+
+### Pipeline Corruption Hardening (shipped ✅)
+- `[x]` **Defend against stage-handoff corruption** — the Jennifer Ann Scasta run surfaced a different failure class from the David Riggs one: the Researcher did real work (10 URLs, 12 notes, 6.4KB of fetched text) but its final task-output string collapsed into a token loop (`thess_thess_thess…`). The Critical Analyst received that garbage, correctly refused to analyse, and the cascade continued downstream — producing a "no information available" report despite a full workspace
+  - `[x]` **LM Studio decoding-stability params** — `repetition_penalty=1.15`, `frequency_penalty=0.3`, `presence_penalty=0.1` on every LLM call in `research_worker.py._make_llm` and `crew.py._make_llm`. Small local models (Gemma in particular) need this to avoid token-repeat collapse
+  - `[x]` **Degenerate-output detector** — `_detect_degenerate_output()` runs on every stage-complete callback and catches three patterns: separator-joined token loops (`foo-foo-foo…`), whitespace-separated word loops (15+ consecutive identical tokens), and low-vocabulary responses (>400 chars but <20 unique tokens with heavy repetition)
+  - `[x]` **Pipeline-corruption stream event** — when collapse is detected mid-run, `{"type": "stage_collapse", "agent", "signal", "sample"}` is emitted; the UI renders it as a red banner in the feed
+  - `[x]` **Structural corruption signal** — the grounding pass flags "notes-fetched-but-zero-citations" when ≥3 notes exist or ≥2 pages were fetched but the final report contains zero URLs. Catches the Jennifer Ann failure mode even if the runtime detector missed the collapse
+  - `[x]` **Corruption hard-caps confidence** — pipeline corruption takes the grounding tier down to LOW regardless of other signals; a score penalty of -3 is also applied
+  - `[x]` **ReadWorkspaceTool** — new tool given to Critical Analyst, Gap Analyst, and Report Synthesizer; returns the canonical plan / notes / draft / confirmed-fetched sources directly from the workspace state. Every downstream task description now instructs the agent to call `read_workspace` as its required first action, making the workspace the source of truth rather than the previous task's fragile summary string
+  - `[x]` **Downstream task prompts explicitly distrust the prior summary** — each post-Researcher task now contains explicit language telling the agent: "If the prior summary looks garbled or low-information, trust the workspace over it"
+  - `[x]` **Unicode-normalised quote matching** — the quote validator now NFKC-normalises and translates smart quotes, em-dashes, and non-breaking spaces before comparison, fixing false-negative mismatches between `’11` (curly) and `'11` (straight) variants observed on the Jennifer Ann Facebook quote
+  - Verified against the Jennifer Ann run: new grounding pass would have reported **LOW confidence (score -3), pipeline corrupted: True, signals [token-loop, notes-fetched-but-zero-citations]** — pointing the reader directly at the workspace (notes.md) where the real findings live
+
+### Citation Grounding & Report Integrity Pass (shipped ✅)
+- `[x]` **Post-synthesis validator runs against the fetched-URL cache to detect fabricated citations, unsupported claims, and thin-profile subjects** — addresses the failure mode surfaced in the David Riggs apples-to-apples test, where the synthesizer wrote confident fundraising prose citing a URL whose actual content never mentioned the subject
+  - `[x]` **Ghost-citation detection** — any URL in the final report that was NOT fetched during the run is flagged inline (⚠ghost-citation) and listed in the Grounding Audit appendix; prevents the model from attaching real-looking URLs it invented
+  - `[x]` **URL liveness probing** — HEAD (with GET fallback) every cited URL at publish time; dead/unreachable URLs are flagged in the appendix. Would have caught `txambound.com` in the test case
+  - `[x]` **Per-citation LLM grounding** — for each (claim, URL) pair in the draft, an auditor LLM reads the fetched page content and decides whether the page ACTUALLY supports the claim, not just whether it's topically relevant; unsupported citations are called out explicitly in the appendix
+  - `[x]` **Thin-profile detection** — counts fetched pages that mention the subject's name tokens; <3 triggers a skepticism warning on the report so readers know the model was working from thin sources
+  - `[x]` **Computed (not asserted) confidence tier** — score combines supported-primary-source count, unsupported-citation penalty, ghost-URL penalty (heaviest), dead-URL penalty, and thin-profile penalty; ghost citations or ≥2 unsupported citations hard-cap the tier at "medium"; replaces LLM-authored "High/Moderate" labels with a mechanical readout
+  - `[x]` **Quote-anchored citations** — `AddNoteTool` accepts optional `source_url` and `quote` fields; when provided, the validator checks that the quote appears verbatim (after whitespace collapse) in the fetched page body
+  - `[x]` **Ghost-citation hard rule in Synthesizer prompt** — the synthesizer is now explicitly instructed that citing non-fetched URLs is a violation checked by the validator; also forbids self-asserted confidence levels
+  - `[x]` **Thorough mode extended to fetched pages** — per-page LLM verdict asks *"does this page actually discuss the research subject?"*; off-topic verdicts get a warning footer telling the researcher NOT to write notes against the page. Complements the shipped per-search-result verdict
+  - `[x]` **Entity-disambiguation candidates** — regex scan of fetched content flags name-like strings that share tokens with the subject but aren't identical (e.g. Davis Riggs donor vs. David Riggs staff); surfaced in the appendix under "Name collisions"
+  - Artifacts: a `grounding.json` file is written alongside `meta.json` for each run; a `fetched.jsonl` cache of full-text fetches is persisted so the run can be re-audited later without re-fetching
+  - UI: live stream badges for `resource_verdict`, `page_verdict`, and a summary `grounding` event with the final confidence tier
+  - Follow-ups not yet shipped: (1) a UI-surfaced disambiguation modal that lets users *pick* an entity mid-run; (2) a dedicated confidence badge on the report header (currently shown only in the appendix and as a stream event)
+
 ### "Use Your Best Judgement" on Clarifying Questions (shipped ✅)
 - `[x]` **Add a "Use Your Best Judgement" button to the clarifying questions modal** — lets the user skip answering and trust the model to make sensible decisions for every open question
   - Button appears alongside the existing "Skip" and "Start Research" buttons: `[Use Your Best Judgement]  [Skip]  [Start Research →]`
