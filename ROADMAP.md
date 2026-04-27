@@ -34,6 +34,20 @@ treated as a coherent phase rather than individual tickets.
 - `[ ]` **MCP returns structured claims data, not just the report markdown** — add a `get_research_claims(job_id)` MCP tool that returns the parsed claims.json, so an agent consuming the result can reason about individual claim confidences rather than scraping them out of prose
 - `[ ]` **Tool docstrings describe the adaptive flow honestly** — agents should understand they're invoking an LLM loop with a budget, not a deterministic pipeline; update the MCP tool descriptions accordingly
 
+### Active-Personality Indicator (workspace status bars)
+- `[ ]` **The pipeline-bar / status-bar UI shows which personality is currently running** — today the bar still reflects the linear-pipeline stages (Stage 1/2/3/4) which don't apply to the adaptive loop, so it's stuck at "idle" the entire run
+  - Replace the 4-stage progress bar with a 3-role indicator: **Planner** (decomposing / picking next action), **Researcher** (executing search or fetch), **Evaluator** (integrating result into claims). The active role pulses; the others sit muted
+  - Driven by the existing stream events: `Planner` log entries, `Researcher` log entries, `Evaluator` log entries already include the agent role — the UI just needs to read them and update the active indicator
+  - Also surface a **loop counter** (e.g. "loop 3 of 40") and the running budget readout (`fetches 2/10 · elapsed 1:24 / 15:00`) so the user has a sense of progress and runway
+  - Stretch: show the latest action's claim_id + truncated text under the indicator so the user can see WHICH claim the loop is currently working on
+
+### Dynamic Clarifying Questions on the adaptive path
+- `[ ]` **Re-wire the LLM-generated clarifying questions feature for the adaptive loop** — the original feature shipped on main (see "Dynamic Clarifying Questions (LLM-Generated, Prompt-Aware)" above) but the dev2 adaptive worker doesn't currently consume the clarifications field, so user answers are silently dropped
+  - Confirm the existing `POST /api/clarify` endpoint still produces good per-query questions for the adaptive flow (it should — it's just an LLM call on the query string, no pipeline assumptions)
+  - When the user submits clarifications, pass them as additional context to the **decomposition step** in the adaptive loop, not to the per-stage agent prompts (which no longer exist on dev2). The clarifications should sharpen the *initial claims* — e.g. "focus on professional, not personal background" should reduce the priority of personal-life claims in the decomposition
+  - Optionally: clarifications also flow into the **planner's system prompt** as ongoing constraints — "the user has indicated X is the priority" — so action selection stays aligned through the loop, not just at decomposition time
+  - Keep the < 2s loading skeleton + static fallback from the original implementation
+
 ### Adaptive-loop quality polish (pre-universal-surface)
 Surfaced by the first two adaptive test runs on Stephen Guetersloh:
 - `[ ]` **Per-update source URLs in the evaluator output** — when the evaluator extracts a quote from a search-result list, it must attach the URL of the specific result the quote came from, not the (empty) action-level URL. Citations currently render as `— ` (empty) for search-derived support
