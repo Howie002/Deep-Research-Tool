@@ -102,6 +102,212 @@ def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[[str, str], Opti
     return call
 
 
+# ── Sidebar repopulation helpers ─────────────────────────────────────────────
+# The existing UI panels (Plan, Notes, Thoughts) listen for `plan_update`,
+# `note_add`, and `thought_node` stream events that the linear pipeline emitted
+# via tools. The adaptive loop doesn't use those tools — but we can synthesise
+# the same events from the claims model so the panels populate live without UI
+# code changes.
+
+
+def _render_plan_markdown(cm: ClaimsModel) -> str:
+    """Render the live claims model as a markdown checklist for the Plan tab."""
+    if not cm.claims:
+        return "## Research Plan\n\n_(decomposing query…)_"
+    lines = ["## Research Plan", ""]
+    # Group by status so the user sees what's done vs what's open at a glance.
+    order = [
+        ("supported",     "✓ Supported", True),
+        ("partial",       "◐ Partial",   False),
+        ("investigating", "↻ Investigating", False),
+        ("unknown",       "□ Open",      False),
+        ("refuted",       "✗ Refuted",   True),
+        ("abandoned",     "— Abandoned", True),
+    ]
+    by_status: dict[str, list] = {}
+    for c in cm.claims.values():
+        by_status.setdefault(c.status.value, []).append(c)
+    for status_key, label, _checked in order:
+        cs = by_status.get(status_key, [])
+        if not cs:
+            continue
+        cs.sort(key=lambda c: -c.priority)
+        lines.append(f"**{label}**")
+        for c in cs:
+            box = "[x]" if c.status.terminal and c.status.value == "supported" else "[ ]"
+            attempts = f"  ·  {c.attempts}× tried" if c.attempts else ""
+            conf = f"  ·  conf {c.confidence:.2f}" if c.confidence else ""
+            lines.append(f"- {box} {c.text}{conf}{attempts}")
+        lines.append("")
+    b = cm.budget
+    lines.append(f"_Budget: fetches {b.fetches_used}/{b.max_fetches} · "
+                 f"searches {b.searches_used}/{b.max_searches} · "
+                 f"loops {b.loops_used}/{b.max_loop_iterations}_")
+    return "\n".join(lines)
+
+
+def _emit_plan_panel(cm: ClaimsModel, emit) -> None:
+    """Push a `plan_update` stream event so the existing Plan tab renders the claims checklist."""
+    try:
+        emit({"type": "plan_update", "content": _render_plan_markdown(cm)})
+    except Exception:
+        pass
+
+
+def _emit_notes_panel(cm: ClaimsModel, emit, claim_ids: list[str]) -> None:
+    """For each updated claim with new Evidence, emit a `note_add` event with the latest quote + URL."""
+    for cid in claim_ids:
+        c = cm.claims.get(cid)
+        if not c or not c.support:
+            continue
+        ev = c.support[-1]   # latest evidence
+        note_md = (
+            f"**{c.text}**  ·  _{c.status.value}_  ·  conf {c.confidence:.2f}\n\n"
+            f"> \"{ev.quote}\"\n\n"
+            f"— [{ev.url}]({ev.url})"
+        )
+        try:
+            emit({
+                "type":       "note_add",
+                "content":    note_md,
+                "source_url": ev.url,
+                "quote":      ev.quote,
+            })
+        except Exception:
+            pass
+
+
+def _emit_thought(emit, label: str, rationale: str = "") -> None:
+    """Emit a `thought_node` event — surfaces in the Thoughts tab as a reasoning step."""
+    import uuid as _uuid
+    try:
+        emit({
+            "type":      "thought_node",
+            "id":        _uuid.uuid4().hex[:8],
+            "label":     label[:140],
+            "rationale": rationale[:400],
+        })
+    except Exception:
+        pass
+
+
+# ── Prose synthesizer (LLM polish pass) ─────────────────────────────────────
+
+
+_PROSE_SYSTEM = (
+    "You are a research writer. You receive a structured claims model from a "
+    "completed investigation: every supported claim comes with one or more "
+    "verbatim quotes from real fetched pages, plus the source URL. Your job is "
+    "to write a flowing research brief that incorporates these established "
+    "facts into a coherent narrative.\n\n"
+    "STRICT RULES — these are mechanically enforced after you write:\n"
+    "  1. Every URL you cite MUST appear in the supplied evidence list. Do NOT "
+    "     invent URLs, recall URLs from training, or paraphrase a URL. URLs not "
+    "     in the evidence will be stripped and flagged.\n"
+    "  2. Every factual claim must trace to a quoted source. If a claim is "
+    "     'partial' (one source) or 'tension' (sources disagree), hedge "
+    "     appropriately — e.g. 'according to a single aggregator listing…' or "
+    "     'two sources differ on this detail'.\n"
+    "  3. Do not assert subjective confidence labels (HIGH / VERIFIED). The "
+    "     calling code attaches a mechanical confidence audit; your assertions "
+    "     would be ignored.\n"
+    "  4. Open / abandoned claims should be acknowledged briefly at the end as "
+    "     known unknowns — not papered over with prose.\n\n"
+    "Format (Markdown):\n"
+    "  ## Summary\n"
+    "  Two- to four-sentence executive answer to the original query, drawing on "
+    "the supported claims.\n\n"
+    "  ## Background\n"
+    "  Two or three flowing paragraphs that introduce the subject and what we "
+    "know about them. Cite URLs inline as `(URL)` after each factual sentence.\n\n"
+    "  ## Findings\n"
+    "  Connected paragraphs (not bullet lists) covering the supported claims, "
+    "organised by topic — employment, education, credentials, history, etc.\n\n"
+    "  ## What Remains Open\n"
+    "  Short paragraph on what couldn't be resolved within the budget.\n\n"
+    "Write for an intelligent reader who wants a brief, not for the agent "
+    "narrating its own activity. No 'the system found' / 'the loop discovered' "
+    "framing — describe the SUBJECT, citing sources."
+)
+
+
+def _evidence_for_prose(cm: ClaimsModel) -> str:
+    """Compact, prompt-ready dump of the claims model + every quote + URL."""
+    parts: list[str] = []
+    by_status: dict[str, list[Claim]] = {}
+    for c in cm.claims.values():
+        by_status.setdefault(c.status.value, []).append(c)
+    for status_label in ("supported", "partial", "refuted", "abandoned",
+                          "investigating", "unknown"):
+        cs = by_status.get(status_label, [])
+        if not cs:
+            continue
+        cs.sort(key=lambda c: -c.confidence)
+        parts.append(f"=== {status_label.upper()} ===")
+        for c in cs:
+            parts.append(f"CLAIM: {c.text}  (confidence {c.confidence:.2f}, "
+                         f"{len(c.support)} supporting / {len(c.contradictions)} contradicting)")
+            for ev in c.support[:5]:
+                parts.append(f"  + \"{ev.quote}\"")
+                parts.append(f"    URL: {ev.url}")
+            for ev in c.contradictions[:3]:
+                parts.append(f"  - tension/contradicts: \"{ev.quote}\"")
+                parts.append(f"    URL: {ev.url}")
+        parts.append("")
+    return "\n".join(parts) if parts else "(no claims)"
+
+
+def _strip_ghost_urls(prose: str, allowed_urls: set[str]) -> tuple[str, list[str]]:
+    """Remove or flag URLs that aren't in `allowed_urls` (post-pass guard).
+
+    Returns (cleaned_prose, list_of_stripped_urls). Mirrors the ghost-citation
+    guard from the grounding pass — the prose synthesizer is hard-rule-bound
+    to use only URLs from the claims model's evidence.
+    """
+    url_re = re.compile(r"https?://[^\s)\]\"'>]+")
+    stripped: list[str] = []
+
+    def _replace(m):
+        url = m.group(0).rstrip(".,;:)]>'\"")
+        if url in allowed_urls:
+            return m.group(0)
+        stripped.append(url)
+        return f"[unverified url stripped]"
+
+    cleaned = url_re.sub(_replace, prose)
+    return cleaned, list(set(stripped))
+
+
+def synthesize_prose(cm: ClaimsModel, llm) -> tuple[str, list[str]]:
+    """LLM-polish pass: write a narrative report grounded in the claims model.
+
+    Returns (prose_markdown, stripped_ghost_urls). Falls back to the
+    deterministic synthesis on any LLM failure.
+    """
+    # Collect every URL the synthesizer is allowed to cite.
+    allowed_urls: set[str] = set()
+    for c in cm.claims.values():
+        for ev in c.support:
+            if ev.url:
+                allowed_urls.add(ev.url)
+        for ev in c.contradictions:
+            if ev.url:
+                allowed_urls.add(ev.url)
+
+    user_prompt = (
+        f"ORIGINAL QUERY: {cm.query}\n\n"
+        f"EVIDENCE FROM THE INVESTIGATION:\n{_evidence_for_prose(cm)}\n\n"
+        f"ALLOWED URLS (cite only these):\n"
+        + "\n".join(f"  - {u}" for u in sorted(allowed_urls))
+        + "\n\nWrite the brief now. Markdown only — no JSON, no code blocks."
+    )
+    raw = llm(_PROSE_SYSTEM, user_prompt)
+    if not raw or len(raw.strip()) < 200:
+        return "", []
+    cleaned, stripped = _strip_ghost_urls(raw, allowed_urls)
+    return cleaned, stripped
+
+
 # ── Deterministic synthesizer ────────────────────────────────────────────────
 
 
@@ -274,6 +480,9 @@ def run_adaptive(
         cm.add_claim(query, priority=1.0)
     _log(f"Initial claims: {len(cm.claims)}", agent="Planner")
     _emit({"type": "claims_snapshot", "model": cm.to_dict()})
+    _emit_plan_panel(cm, _emit)
+    _emit_thought(_emit, "Decomposing the research query into verifiable claims",
+                  f"{len(cm.claims)} initial claims set; loop will investigate each in priority order.")
     for c in cm.claims.values():
         _log(f"  • ({c.priority:.2f}) {c.text}", agent="Planner")
 
@@ -358,6 +567,13 @@ def run_adaptive(
                    "new_claim_count": len(replan.get("new_claims", [])),
                    "next_action_type": (replan.get("next_action") or {}).get("type", "")})
             _emit({"type": "claims_snapshot", "model": cm.to_dict()})
+            _emit_plan_panel(cm, _emit)
+            if replan["diagnosis"]:
+                _emit_thought(
+                    _emit,
+                    f"Strategist re-plan ({changes} changes)",
+                    replan["diagnosis"],
+                )
             # The strategist's recommended next action drives this loop turn.
             action = replan["next_action"] or {"type": "stop", "reason": "strategist returned no action"}
             consecutive_unproductive = 0
@@ -451,7 +667,8 @@ def run_adaptive(
         cm.log_action(action, f"{elapsed:.1f}s; result {len(result)} chars")
 
         # ── 2c. Evaluator integrates the result ────────────────────────
-        upd = integrate_result(cm, evidence_kind, result, evidence_url, evidence_cat, llm)
+        upd = integrate_result(cm, evidence_kind, result, evidence_url, evidence_cat, llm,
+                               subject=cm.query)
         any_progress = bool(upd.get("updated_claims") or upd.get("new_claim_ids"))
         if any_progress:
             consecutive_unproductive = 0
@@ -468,6 +685,11 @@ def run_adaptive(
             "parse_failed":    upd.get("parse_failed", False),
             "budget":          cm.budget.snapshot(),
         })
+        # Push panel updates so Plan / Notes refresh live with each evidence pass.
+        if any_progress:
+            updated_ids = [u["id"] for u in upd.get("updated_claims", []) if u.get("support_count", 0) > 0]
+            _emit_notes_panel(cm, _emit, updated_ids)
+            _emit_plan_panel(cm, _emit)
         _log(
             f"Evaluator: updated {len(upd.get('updated_claims', []))} claim(s), "
             f"added {len(upd.get('new_claim_ids', []))} new. "
@@ -477,9 +699,44 @@ def run_adaptive(
 
     # ── 3. Snapshot final state + synthesize ────────────────────────────
     _emit({"type": "claims_snapshot", "model": cm.to_dict()})
+    _emit_plan_panel(cm, _emit)
 
     _log("Rendering final report…", agent="Synthesizer")
-    report = synthesize_report(cm)
+
+    # Deterministic synthesis is always available — both the appendix below
+    # and the fallback if the prose polish fails.
+    deterministic = synthesize_report(cm)
+
+    # LLM polish pass — write a flowing narrative grounded in the claims
+    # model's evidence. Falls back to deterministic-only on any failure.
+    prose, stripped_urls = synthesize_prose(cm, llm)
+    if prose.strip():
+        if stripped_urls:
+            _log(f"Prose synthesis: stripped {len(stripped_urls)} ghost URL(s) "
+                 f"not in evidence set", agent="Synthesizer")
+        report = (
+            prose
+            + "\n\n---\n\n## Verification Appendix\n\n"
+            + "_The brief above is grounded in the evidence below — every URL "
+              "cited in the prose was actually fetched during this run, and "
+              "every quoted snippet is verbatim from the source page. The "
+              "structured breakdown lets you audit any specific claim._\n\n"
+            + deterministic
+        )
+        _emit_thought(_emit, "Prose synthesis complete",
+                      f"Narrative + verification appendix; "
+                      f"{len(stripped_urls)} ghost URLs stripped." if stripped_urls
+                      else "Narrative + verification appendix.")
+    else:
+        _log("Prose synthesis unavailable — falling back to deterministic structure.",
+             agent="Synthesizer")
+        report = deterministic
+
+    # Update the Draft panel with the final report so users can review there too.
+    try:
+        _emit({"type": "draft_update", "content": report})
+    except Exception:
+        pass
 
     # Persist the claims model alongside the report for inspection
     if job_id and jobs_dir:

@@ -24,19 +24,21 @@ LLMFn = Callable[[str, str], Optional[str]]
 
 _EVAL_SYSTEM = (
     "You are a research evaluator. You are given:\n"
-    "  (a) a list of open claims in an ongoing investigation, and\n"
-    "  (b) new evidence that just came in (a search result list or fetched page content).\n\n"
+    "  (a) the research SUBJECT (the person, organisation, or topic being investigated),\n"
+    "  (b) a list of open claims about that subject, and\n"
+    "  (c) new evidence that just came in (a search result list or fetched page content).\n\n"
     "For each claim, decide whether the evidence supports, refutes, or doesn't touch it. "
     "If it does, extract a short verbatim quote (max 200 chars) from the evidence that "
     "establishes this. Also raise NEW claims when the evidence reveals facts worth "
-    "verifying that aren't in the current claims list (e.g. a new credential, employer, "
-    "or affiliation not yet tracked).\n\n"
+    "verifying that aren't in the current claims list — but only if those new claims are "
+    "ABOUT THE SUBJECT.\n\n"
     "Output STRICT JSON and nothing else:\n"
     "{\n"
     '  "updates": [\n'
     '    {"claim_id": "<id>", "supports": true|false, "quote": "<short verbatim>",\n'
     '     "source_url": "<the EXACT URL of the source the quote came from>",\n'
-    '     "confidence_delta": 0.05-0.5}\n'
+    '     "confidence_delta": 0.05-0.5,\n'
+    '     "tension": true|false}\n'
     "  ],\n"
     '  "new_claims": [\n'
     '    {"text": "<short verifiable claim>", "priority": 0.0-1.0, "parent_claim_id": "<id or null>"}\n'
@@ -52,9 +54,21 @@ _EVAL_SYSTEM = (
     " - **Quote rules:** at least 10 characters, must appear verbatim (or near-verbatim) "
     "in the evidence text. NEVER output 'None', 'null', 'N/A' or any other placeholder "
     "string as a quote — if no real quote exists, omit the update entirely.\n"
+    " - **Subject focus on new_claims:** new_claims must be ABOUT the research subject. "
+    "If the evidence mentions other people, places, organisations, or events that "
+    "co-occur with the subject (e.g. an article about the subject names colleagues, or a "
+    "company page lists other employees), DO NOT raise those as new claims. They are "
+    "tangential. Only raise new claims that describe an attribute of THE SUBJECT THEMSELVES "
+    "(employer, credential, education, role, affiliation, project).\n"
+    " - **Refutation vs. tension.** Set `supports: false` ONLY when the evidence "
+    "directly negates a claim — e.g. the source explicitly says 'X is NOT employed at Y' "
+    "or names a different person as the holder of the claimed role. If two sources merely "
+    "give DIFFERENT facts that could both be true at different times (e.g. 'platoon leader, "
+    "A Company' in 2014 and 'platoon leader, B Company' in 2016), set `supports: true` "
+    "with `tension: true` — this records that sources disagree without claiming the prior "
+    "evidence was wrong.\n"
     " - confidence_delta: 0.5 for strong primary-source confirmation, 0.3 for solid "
-    "secondary, 0.15 for mere mention, NEGATIVE only if evidence refutes.\n"
-    " - Only raise new claims that are concrete and verifiable — skip vague assertions.\n"
+    "secondary, 0.15 for mere mention, NEGATIVE only if evidence genuinely refutes.\n"
     " - If nothing in the evidence addresses any claim, return empty arrays."
 )
 
@@ -86,17 +100,27 @@ def _claims_digest(cm: ClaimsModel) -> str:
     return "\n".join(lines) if lines else "(no open claims)"
 
 
-def _eval_user_prompt(cm: ClaimsModel, evidence_kind: str, evidence_text: str, evidence_url: str = "") -> str:
+def _eval_user_prompt(
+    cm: ClaimsModel,
+    evidence_kind: str,
+    evidence_text: str,
+    evidence_url: str = "",
+    subject: str = "",
+) -> str:
     # Cap evidence body so the classifier model isn't drowned.
     body = evidence_text.strip()
     if len(body) > 6000:
         body = body[:6000] + "\n…[truncated]"
     source_line = f"SOURCE URL: {evidence_url}\n" if evidence_url else ""
+    subject_line = f"RESEARCH SUBJECT: {subject}\n\n" if subject else ""
     return (
+        f"{subject_line}"
         f"OPEN CLAIMS:\n{_claims_digest(cm)}\n\n"
         f"{evidence_kind.upper()} RESULT:\n{source_line}"
         f"{body}\n\n"
-        "Output only the JSON verdict."
+        "Output only the JSON verdict. Reminder: new_claims must be ABOUT the research "
+        "subject named above — tangential mentions of other people, places, or events "
+        "in this evidence are NOT new claims worth investigating."
     )
 
 
@@ -127,6 +151,7 @@ def integrate_result(
     evidence_url: str,
     evidence_category: str,
     llm: LLMFn,
+    subject: str = "",          # query/subject string used for new-claim focus
 ) -> dict:
     """Update the claims model from a fresh action result. Returns a
     compact summary dict describing changes made."""
@@ -136,7 +161,7 @@ def integrate_result(
         "parse_failed":   False,
     }
 
-    raw = llm(_EVAL_SYSTEM, _eval_user_prompt(cm, evidence_kind, evidence_text, evidence_url))
+    raw = llm(_EVAL_SYSTEM, _eval_user_prompt(cm, evidence_kind, evidence_text, evidence_url, subject))
     parsed = _parse(raw or "")
     if not isinstance(parsed, dict):
         summary["parse_failed"] = True
@@ -176,8 +201,18 @@ def integrate_result(
             delta = float(upd.get("confidence_delta", 0.0))
         except (TypeError, ValueError):
             delta = 0.0
-        # Flip sign: refuting evidence decreases confidence toward 0 (and below).
-        if not supports:
+        # Tension flag: source-level disagreement that may not be real refutation.
+        # When tension=true, store as supporting evidence (sources differ but the
+        # claim may still hold) but apply a small confidence penalty rather than a
+        # large negative delta.
+        tension = bool(upd.get("tension")) and not supports
+        if tension:
+            # Promote to supports=True with reduced delta — preserves the quote
+            # as evidence the claim is contested rather than wrong.
+            supports = True
+            delta = max(0.0, abs(delta) * 0.3)
+        elif not supports:
+            # Genuine refutation — flip the sign.
             delta = -abs(delta)
 
         claim.add_evidence(
@@ -195,6 +230,7 @@ def integrate_result(
             "confidence": claim.confidence,
             "support_count":       len(claim.support),
             "contradiction_count": len(claim.contradictions),
+            "tension":             tension,
         })
 
     # Raise new claims when the evidence surfaced facts
