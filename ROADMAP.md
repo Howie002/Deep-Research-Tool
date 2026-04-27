@@ -5,6 +5,45 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` shipped
 
 ---
 
+## Adaptive-Loop Architecture (dev2 branch)
+
+The `dev2` branch pivots the research engine to a claims-model-driven
+adaptive loop (see `BRANCH_NOTES.md`). The items below track the work
+needed for adaptive to become a first-class, universally-accessible
+mode alongside or in place of the linear pipeline. They should be
+treated as a coherent phase rather than individual tickets.
+
+### Universal Surface (API / UI / MCP parity)
+- `[ ]` **Adaptive as the primary (or only) mode across every caller surface** — the same adaptive-loop run is reachable identically whether the caller is a human (UI), a REST client, or an MCP-using agent. No "it works via CLI but not via the API" gaps
+  - `[ ]` **`research_worker.main()` dispatches on job mode** (or, on dev2, simply runs adaptive) so POST /api/jobs and MCP `start_research` both trigger the adaptive loop with identical semantics and stream output
+  - `[ ]` **`save_run` picks up `claims.json` alongside `grounding.json` / `fetched.jsonl`** so the artifacts directory is mode-agnostic — consumers can request any JSON artifact without branching on mode
+  - `[ ]` **MCP `start_research` gains an optional `mode` parameter** (default: whatever this branch decides is default) so agents can explicitly select the adaptive path by name
+  - `[ ]` **REST `JobCreateRequest` gains an optional `mode` field** for agent/REST-client parity with MCP
+  - `[ ]` **`GET /api/reports/{file}/claims`** — fetch the claims.json artifact for a completed adaptive run; same shape as the `claims_snapshot` stream payload so downstream consumers can use the same parser live or post-hoc
+
+### Live Claims-Board UI
+- `[ ]` **Live claims-board panel** rendered from `claims_snapshot` and `claims_update` stream events — replaces (or complements) the pipeline's Plan / Notes tabs on adaptive runs
+  - Each claim renders as a card: claim text, status badge (unknown/investigating/supported/partial/refuted/abandoned), confidence bar 0-1, count of supporting + contradicting evidence with the most recent quote snippet expandable
+  - Sorted by priority × (1 − confidence) so the most consequential open claims sit at the top while they're active
+  - Status transitions animate subtly — a partial → supported promotion should visibly "lock in", so the user watching the feed sees the agent closing questions in real time
+  - New claims raised mid-run fade in with a small "+ new thread" badge
+  - Budget counter in the panel header: `fetches 3/10 · searches 2/10 · elapsed 1:24 / 15:00` so users see runway at a glance
+- `[ ]` **Report header confidence + corruption badges** applied to adaptive reports identically to pipeline reports, reusing the grounding-pass output
+
+### MCP parity with UI
+- `[ ]` **MCP returns structured claims data, not just the report markdown** — add a `get_research_claims(job_id)` MCP tool that returns the parsed claims.json, so an agent consuming the result can reason about individual claim confidences rather than scraping them out of prose
+- `[ ]` **Tool docstrings describe the adaptive flow honestly** — agents should understand they're invoking an LLM loop with a budget, not a deterministic pipeline; update the MCP tool descriptions accordingly
+
+### Adaptive-loop quality polish (pre-universal-surface)
+Surfaced by the first two adaptive test runs on Stephen Guetersloh:
+- `[ ]` **Per-update source URLs in the evaluator output** — when the evaluator extracts a quote from a search-result list, it must attach the URL of the specific result the quote came from, not the (empty) action-level URL. Citations currently render as `— ` (empty) for search-derived support
+- `[ ]` **Reject placeholder quotes** — treat empty strings, "None", "null", and quotes shorter than 10 characters as invalid evidence and skip them; prevents false refutations like the "faculty position at A&M" → REFUTED-on-"None"-quote incident
+- `[ ]` **URL normalisation for fetch dedup** — strip trailing slashes and lowercase host before storing in `fetched_urls`; `linkedin.com/in/x/` and `linkedin.com/in/x` should count as the same URL
+- `[ ]` **Back-matching pass for newly-raised claims** — when the evaluator raises a new narrower claim mid-run (e.g. "BS 1988" raised after a page mentioned it), re-check that same page's content against the new claim immediately so the evidence isn't lost
+- `[ ]` **Gated/403 fetch detection feeds back to the planner** — when a fetch returns a login-wall or 403 response, emit a signal so the planner doesn't keep suggesting variants of the same URL (LinkedIn variants were fetched twice because of this)
+
+---
+
 ## Pre-Run
 
 ### Pre-Run Clarifying Questions (shipped ✅)

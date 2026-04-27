@@ -350,6 +350,17 @@ def save_run(
             except OSError:
                 pass
 
+        # Copy adaptive-loop claims-model artifact (dev2). Preserved so the
+        # UI / API / MCP can surface per-claim status and confidence.
+        claims_src = jobs_dir / f"{job_id}.claims.json"
+        if claims_src.exists():
+            try:
+                (art_dir / "claims.json").write_text(
+                    claims_src.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
         return prefix
 
     except Exception:
@@ -367,9 +378,9 @@ def save_run(
 
 
 def cleanup_job(job_id: str, jobs_dir: Path) -> None:
-    """Delete the job JSON, log, stream, grounding, fetched-cache, and startup-marker files."""
+    """Delete the job JSON, log, stream, grounding, claims, fetched-cache, and startup-marker files."""
     for suffix in (".json", ".log", ".stream", ".started", ".tmp",
-                   ".grounding.json", ".fetched.jsonl"):
+                   ".grounding.json", ".fetched.jsonl", ".claims.json"):
         try:
             (jobs_dir / f"{job_id}{suffix}").unlink()
         except FileNotFoundError:

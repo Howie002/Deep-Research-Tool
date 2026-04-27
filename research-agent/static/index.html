@@ -1109,6 +1109,35 @@ function handleStreamEvent(ev) {
       break;
     }
 
+    // ── Adaptive-loop events (dev2) ─────────────────────────────────────
+    // No claims-board UI yet — those are roadmapped. For now render a
+    // concise summary line so the feed reads cleanly.
+    case 'claims_snapshot': {
+      const m = ev.model || {};
+      const counts = {};
+      for (const c of (m.claims || [])) counts[c.status] = (counts[c.status] || 0) + 1;
+      const parts = Object.entries(counts).map(([k,v]) => `${esc(k)}=${v}`).join(', ');
+      const b = m.budget || {};
+      const meta = `loops ${b.loops_used||0}/${b.max_loop_iterations||'?'} · fetches ${b.fetches_used||0}/${b.max_fetches||'?'} · ${(b.elapsed_seconds||0).toFixed(0)}s`;
+      appendStreamRow('',
+        `${ts(ev.ts)}<span style="color:var(--subtle);font-size:.7rem">📋 Claims: ${parts || '(none)'} · ${meta}</span>`);
+      break;
+    }
+
+    case 'claims_update': {
+      // Per-action update: how many claims moved, how many newly raised.
+      const upd = ev.updated_claims || [];
+      const added = ev.new_claim_ids || [];
+      if (!upd.length && !added.length && !ev.parse_failed) break;   // no-op turns are noisy
+      const flagged = ev.parse_failed ? ' <span style="color:#fb923c">(evaluator parse failed)</span>' : '';
+      const parts = [];
+      if (upd.length)   parts.push(`${upd.length} updated`);
+      if (added.length) parts.push(`${added.length} new`);
+      appendStreamRow('',
+        `${ts(ev.ts)}<span style="color:var(--subtle);font-size:.7rem">↳ ${parts.join(' · ') || 'evaluator pass'}${flagged}</span>`);
+      break;
+    }
+
     case 'resource_verdict': {
       // Thorough-mode per-result usefulness verdict.
       const color = ev.verdict === 'useful' ? '#34d399' : '#f87171';

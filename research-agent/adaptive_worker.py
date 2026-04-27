@@ -33,6 +33,34 @@ from adaptive_planner import decompose_query, next_action
 from adaptive_evaluator import integrate_result
 
 
+# ── URL harvesting from search output ────────────────────────────────────────
+# WebSearchTool returns markdown-formatted search results; parse them back
+# into (url, title, snippet) tuples so the planner can see what's available
+# to fetch next.
+
+_SEARCH_BLOCK_RE = re.compile(
+    r"^\s*\d+\.\s+\*\*(?P<title>[^*]+)\*\*.*?$"             # numbered title line
+    r"\n\s*URL:\s*(?P<url>\S+)\s*$"                          # URL: <url>
+    r"\n\s*(?P<snippet>[^\n]+)\s*$",                         # snippet line
+    re.MULTILINE,
+)
+
+
+def _harvest_search_urls(search_text: str) -> list[dict]:
+    """Parse WebSearchTool output into [{url, title, snippet}]."""
+    out: list[dict] = []
+    for m in _SEARCH_BLOCK_RE.finditer(search_text or ""):
+        url = m.group("url").strip()
+        if not url.startswith(("http://", "https://")):
+            continue
+        out.append({
+            "url":     url,
+            "title":   m.group("title").strip(),
+            "snippet": m.group("snippet").strip(),
+        })
+    return out
+
+
 # ── Minimal LLM caller (no LiteLLM / CrewAI dependency) ──────────────────────
 
 
@@ -251,6 +279,13 @@ def run_adaptive(
 
     # ── 2. Main loop ────────────────────────────────────────────────────
     consecutive_unproductive = 0
+    consecutive_searches = 0                # circuit-breaker counter
+    # URLs discovered by searches but not yet fetched. Entries are
+    # {"url", "title", "snippet"}; de-duped by URL. The planner sees
+    # this list so it can propose fetches naturally.
+    surfaced_urls: list[dict] = []
+    _seen_surfaced: set[str] = set()
+
     while True:
         reason = cm.budget.exhausted()
         if reason:
@@ -268,8 +303,33 @@ def run_adaptive(
 
         cm.budget.loops_used += 1
 
+        # Drop already-fetched URLs from the surfaced queue so the
+        # planner isn't tempted to refetch.
+        surfaced_urls = [s for s in surfaced_urls if s["url"] not in cm.fetched_urls]
+
         # ── 2a. Planner picks next action ──────────────────────────────
-        action = next_action(cm, llm)
+        action = next_action(cm, llm, available_urls=surfaced_urls)
+
+        # Circuit-breaker: if the planner has proposed three searches in
+        # a row and there are surfaced URLs waiting to be fetched, force
+        # a fetch of the most promising available URL.
+        if (
+            action["type"] == "search"
+            and consecutive_searches >= 2
+            and surfaced_urls
+        ):
+            forced = surfaced_urls[0]
+            _log(
+                f"Circuit-breaker: 3 searches without a fetch → forcing fetch of "
+                f"{forced['url']}",
+                agent="Planner",
+            )
+            action = {
+                "type": "fetch",
+                "url":  forced["url"],
+                "target_claim_id": action.get("target_claim_id"),
+            }
+
         if action["type"] == "stop":
             _log(f"Planner chose to stop: {action.get('reason','')}", agent="Planner")
             break
@@ -291,6 +351,18 @@ def run_adaptive(
                 cm.log_action(action, f"(search failed: {exc})")
                 continue
             cm.budget.searches_used += 1
+            consecutive_searches += 1
+            # Harvest URLs so the planner can propose fetches next turn.
+            harvested = _harvest_search_urls(result)
+            new_count = 0
+            for item in harvested:
+                if item["url"] in _seen_surfaced or item["url"] in cm.fetched_urls:
+                    continue
+                _seen_surfaced.add(item["url"])
+                surfaced_urls.append(item)
+                new_count += 1
+            if new_count:
+                _log(f"  surfaced {new_count} new URL(s) to fetch queue", agent="Researcher")
             evidence_kind = "search"
             evidence_url = ""
             evidence_cat = ""
@@ -311,6 +383,7 @@ def run_adaptive(
                 continue
             cm.budget.fetches_used += 1
             cm.fetched_urls.add(url)
+            consecutive_searches = 0   # reset circuit-breaker on a fetch
             evidence_kind = "fetch"
             evidence_url = url
             evidence_cat = _classify_url(url)

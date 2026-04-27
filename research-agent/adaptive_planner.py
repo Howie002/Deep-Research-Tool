@@ -28,47 +28,72 @@ LLMFn = Callable[[str, str], Optional[str]]
 
 
 _DECOMPOSE_SYSTEM = (
-    "You decompose a research query into 3-8 concrete verifiable claims. "
-    "Each claim is a short statement that would appear in a completed report as a fact, "
-    "written so it can be independently verified by reading a web page. "
-    "Avoid meta-claims ('this person is interesting'); prefer specific attributes "
-    "(employer, role, education, credentials, publications, affiliations). "
+    "You decompose a research query into 3-8 GENERIC verifiable claims that can be "
+    "resolved by fetching primary sources. Do NOT guess the subject's field, "
+    "specialty, or domain — that's what the investigation is for. "
+    "Write each claim as an open-ended attribute to investigate, phrased neutrally.\n\n"
+    "For PERSON queries, standard decomposition:\n"
+    "  - The subject's current employer / primary affiliation\n"
+    "  - The subject's past employment / notable prior roles\n"
+    "  - The subject's education (institutions + degrees + years)\n"
+    "  - The subject's professional credentials / licenses / certifications\n"
+    "  - The subject's publications / public works / notable projects\n"
+    "  - Specific attributes named in the query itself (e.g. 'former professor at X' → "
+    "    'The subject held a faculty position at X')\n\n"
+    "For ORGANISATION or TOPIC queries, decompose similarly into structural / "
+    "attribute-level claims, not into opinions or interpretations.\n\n"
+    "DO NOT invent claims that assume a specific domain based on the subject's name, "
+    "apparent background, or the query phrasing. If the query says 'former professor' "
+    "it means they once taught — it does NOT specify the subject matter they taught. "
+    "The department, the field, and the research topic must emerge from EVIDENCE, not "
+    "be invented in the decomposition.\n\n"
     "Output STRICT JSON and nothing else: "
-    '{"claims": [{"text": "...", "priority": 0.0-1.0}, ...]}'
+    '{"claims": [{"text": "<neutral, verifiable statement>", "priority": 0.0-1.0}, ...]}'
 )
 
 
 def _decompose_user_prompt(query: str) -> str:
     return (
         f"QUERY: {query}\n\n"
-        "Produce 3-8 concrete, verifiable claims. Set priority 1.0 for claims central "
+        "Produce 3-8 generic, verifiable claims. Set priority 1.0 for claims central "
         "to the query's main subject, 0.6 for important supporting claims, 0.3 for "
-        "peripheral context. Output only the JSON object."
+        "peripheral context. Each claim should be answerable by fetching one or two "
+        "authoritative sources.\n\n"
+        "Remember: claims should describe WHAT to find (an attribute), not WHAT IT WILL "
+        "BE (a specific value). 'The subject's current employer' is correct. "
+        "'The subject is employed at Harvard' is NOT correct — that prejudges the answer.\n\n"
+        "Output only the JSON object."
     )
 
 
 _NEXT_ACTION_SYSTEM = (
     "You are a research planner. You see the live state of an ongoing investigation "
-    "(current claims, their support, recent actions, remaining budget) and choose the "
-    "single most valuable next action.\n\n"
+    "(current claims, their support, recent actions, URLs surfaced but not yet fetched, "
+    "and remaining budget) and choose the single most valuable next action.\n\n"
     "Your output is one of these JSON shapes (and NOTHING else):\n"
     '  {"type": "search", "query": "<search query>", "target_claim_id": "<id or null>"}\n'
     '  {"type": "fetch",  "url": "<url>", "target_claim_id": "<id or null>"}\n'
     '  {"type": "stop",   "reason": "<short reason>"}\n\n'
     "Rules:\n"
+    " - **If there are URLs in 'AVAILABLE TO FETCH' that look promising for an open "
+    "claim, prefer 'fetch' over another 'search'.** Searches produce URLs; fetches "
+    "produce evidence. You must fetch to make progress.\n"
     " - Pick actions that close the highest-uncertainty claim first.\n"
-    " - Prefer a targeted search query that will surface a PRIMARY source (official "
-    "organisational pages, government registries, the subject's own site) over a "
-    "generic web search.\n"
-    " - If a claim involves a specific credential (JD / PhD / medical license), "
-    "the right action is usually to search the relevant registry.\n"
-    " - Do NOT re-search for something already attempted — look at 'recent actions'.\n"
+    " - Prefer primary sources (official org pages, government registries, the subject's "
+    "own site / LinkedIn) over aggregator pages (scispace, zoominfo) when both are "
+    "available.\n"
+    " - If a claim involves a specific credential (JD / PhD / medical license / bar admission), "
+    "the right action is usually to search the relevant registry, then fetch the registry "
+    "page when it appears.\n"
+    " - Do NOT re-search for something already attempted — look at 'recent actions'. If a "
+    "search has returned results but you haven't fetched anything, fetch one of those URLs "
+    "before searching again.\n"
     " - Return 'stop' when claims are satisfactorily answered, or when you've tried "
     "several paths and further effort is unlikely to help within budget."
 )
 
 
-def _next_action_user_prompt(cm: ClaimsModel) -> str:
+def _next_action_user_prompt(cm: ClaimsModel, available_urls: Optional[list[dict]] = None) -> str:
     # Render the current state compactly. Top 10 claims max; recent 6 actions.
     claim_lines: list[str] = []
     for c in sorted(cm.claims.values(), key=lambda c: (-c.priority, c.attempts))[:10]:
@@ -90,6 +115,22 @@ def _next_action_user_prompt(cm: ClaimsModel) -> str:
         res = (a.get("result") or "").replace("\n", " ")[:120]
         action_lines.append(f"- [{t}] {descr[:80]}  →  {res or '(no result)'}")
 
+    # URLs surfaced by searches but not yet fetched — the planner needs
+    # to see these to propose "fetch" actions at all.
+    url_lines: list[str] = []
+    for item in (available_urls or [])[:10]:
+        u = item.get("url", "")
+        if not u:
+            continue
+        title = item.get("title", "")
+        snippet = item.get("snippet", "").replace("\n", " ")[:140]
+        parts = [f"  {u}"]
+        if title:
+            parts.append(f"    title: {title[:120]}")
+        if snippet:
+            parts.append(f"    snippet: {snippet}")
+        url_lines.append("\n".join(parts))
+
     budget = cm.budget
     return (
         f"QUERY: {cm.query}\n\n"
@@ -103,6 +144,9 @@ def _next_action_user_prompt(cm: ClaimsModel) -> str:
         + "\n\n"
         "RECENT ACTIONS (last 6):\n"
         + ("\n".join(action_lines) if action_lines else "(none)")
+        + "\n\n"
+        "AVAILABLE TO FETCH (URLs surfaced by searches, not yet fetched):\n"
+        + ("\n".join(url_lines) if url_lines else "(none — run a search first)")
         + "\n\n"
         "Pick the single next action. Output only the JSON."
     )
@@ -159,13 +203,23 @@ def decompose_query(query: str, llm: LLMFn) -> list[dict]:
     return out[:8]
 
 
-def next_action(cm: ClaimsModel, llm: LLMFn) -> dict:
+def next_action(
+    cm: ClaimsModel,
+    llm: LLMFn,
+    available_urls: Optional[list[dict]] = None,
+) -> dict:
     """Return a dict describing the next action.
 
     Always returns a valid action dict — on LLM/parse failure falls back
-    to either searching the highest-priority open claim's text or stopping.
+    to either fetching an available URL (if the planner sees one and the
+    claims are open), searching the highest-priority open claim's text,
+    or stopping.
+
+    available_urls: optional [{"url", "title", "snippet"}, ...] — URLs
+    surfaced by recent searches that have not yet been fetched. Makes it
+    possible for the planner to propose `fetch` actions at all.
     """
-    raw = llm(_NEXT_ACTION_SYSTEM, _next_action_user_prompt(cm))
+    raw = llm(_NEXT_ACTION_SYSTEM, _next_action_user_prompt(cm, available_urls))
     parsed = _parse_json(raw or "")
 
     if isinstance(parsed, dict):
@@ -193,8 +247,17 @@ def next_action(cm: ClaimsModel, llm: LLMFn) -> dict:
             }
 
     # Fallbacks:
-    # If there's an open claim, search for its text.
     open_claim = cm.highest_priority_open()
+    # Prefer fetching an available URL over yet another search — that's
+    # how the loop actually makes progress.
+    if available_urls and open_claim:
+        url = (available_urls[0] or {}).get("url")
+        if url:
+            return {
+                "type": "fetch",
+                "url": url,
+                "target_claim_id": open_claim.id,
+            }
     if open_claim:
         return {
             "type": "search",
