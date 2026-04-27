@@ -34,6 +34,21 @@ treated as a coherent phase rather than individual tickets.
 - `[ ]` **MCP returns structured claims data, not just the report markdown** — add a `get_research_claims(job_id)` MCP tool that returns the parsed claims.json, so an agent consuming the result can reason about individual claim confidences rather than scraping them out of prose
 - `[ ]` **Tool docstrings describe the adaptive flow honestly** — agents should understand they're invoking an LLM loop with a budget, not a deterministic pipeline; update the MCP tool descriptions accordingly
 
+### Strategist Turn — Meta-loop reflection (tactical → strategic)
+- `[~]` **The adaptive loop today picks individual actions well but never reflects on its own strategy** — when tactical moves stop producing claim updates, the loop just stops. It needs a periodic *strategist* turn that revises the plan, identifies stuck claims, and pivots strategy instead of bailing on the run
+  - **Trigger:** runs (a) when the tactical loop would otherwise have stopped on stagnation, and (b) every N tactical loops (configurable, default ~5) regardless of progress, so re-planning isn't only reactive
+  - **Inputs:** the live ClaimsModel, recent action log, surfaced-URL queue, remaining budget
+  - **Outputs (a single LLM call):**
+    - `diagnosis` — short text on why progress has stalled (single-source-only, dead-end claim, subject's profile is sparse, all aggregator-derived evidence, etc.)
+    - `priority_updates` — raise/lower individual claim priorities based on what's now most consequential or most reachable
+    - `abandon` — claim ids to mark ABANDONED when they're clearly dead-ends within the remaining budget (saves wasted tactical attempts)
+    - `new_claims` — narrower or alternative claims that the current set is missing (e.g. "subject has a personal website" / "subject lists a phone in a specific area code")
+    - `next_action` — a recommended search or fetch that explicitly breaks the stalemate (different angle, different source category)
+  - **Corroboration awareness on the tactical Planner:** even outside strategist turns, the tactical Planner gets a new rule — *"if the target claim is PARTIAL with only ONE supporting source, your next action MUST seek corroboration from a different source category; don't repeat the same search and don't fetch another aggregator if the existing source is already one."* This addresses the specific PARTIAL-stuck-at-0.50 pattern observed on Andrew Howerton and Stephen Guetersloh runs
+  - **Persistence:** stop-on-stagnation is removed in favour of "trigger strategist". Hard budget caps (max_fetches / max_wallclock / max_loop_iterations) remain the only stopping conditions, plus a small safety: stop if two consecutive strategist turns produce zero changes (the LLM has nothing left to suggest)
+  - **Cost ceiling:** strategist calls count against `max_llm_calls` like everything else; a per-run cap (default ~5 strategist turns) prevents runaway re-planning
+  - Works as designed when: a run that would have stopped at 5 partial / 0 supported instead persists, runs a strategist turn, gets a corroboration probe against a different source type, and promotes 2-3 of the partials to SUPPORTED before budget exhaustion
+
 ### Active-Personality Indicator (workspace status bars)
 - `[ ]` **The pipeline-bar / status-bar UI shows which personality is currently running** — today the bar still reflects the linear-pipeline stages (Stage 1/2/3/4) which don't apply to the adaptive loop, so it's stuck at "idle" the entire run
   - Replace the 4-stage progress bar with a 3-role indicator: **Planner** (decomposing / picking next action), **Researcher** (executing search or fetch), **Evaluator** (integrating result into claims). The active role pulses; the others sit muted

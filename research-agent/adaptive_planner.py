@@ -18,7 +18,7 @@ import json
 import re
 from typing import Callable, Optional
 
-from claims import Claim, ClaimsModel
+from claims import Claim, ClaimsModel, ClaimStatus
 
 LLMFn = Callable[[str, str], Optional[str]]
 #   (system: str, user: str) -> content: str | None
@@ -79,17 +79,24 @@ _NEXT_ACTION_SYSTEM = (
     "claim, prefer 'fetch' over another 'search'.** Searches produce URLs; fetches "
     "produce evidence. You must fetch to make progress.\n"
     " - Pick actions that close the highest-uncertainty claim first.\n"
+    " - **Corroboration rule:** If your target claim is already PARTIAL (status=partial) "
+    "with only ONE supporting URL, your next action MUST seek corroboration from a "
+    "DIFFERENT source category — do NOT repeat the search query that found the first "
+    "source, and do NOT fetch another aggregator page (rocketreach / zoominfo / signalhire / "
+    "scispace) if the existing source is already one. The point is a SECOND independent "
+    "source for the same fact, not another mention of it. Try a primary org page, a "
+    "registry, the subject's own site, or a news/press release angle.\n"
     " - Prefer primary sources (official org pages, government registries, the subject's "
-    "own site / LinkedIn) over aggregator pages (scispace, zoominfo) when both are "
-    "available.\n"
+    "own site / LinkedIn) over aggregator pages when both are available.\n"
     " - If a claim involves a specific credential (JD / PhD / medical license / bar admission), "
     "the right action is usually to search the relevant registry, then fetch the registry "
     "page when it appears.\n"
     " - Do NOT re-search for something already attempted — look at 'recent actions'. If a "
     "search has returned results but you haven't fetched anything, fetch one of those URLs "
     "before searching again.\n"
-    " - Return 'stop' when claims are satisfactorily answered, or when you've tried "
-    "several paths and further effort is unlikely to help within budget."
+    " - Return 'stop' ONLY if claims are satisfactorily answered AND the budget is barely "
+    "started. Do not stop just because the last few turns produced no updates — the loop "
+    "has a separate strategist mechanism for that."
 )
 
 
@@ -265,3 +272,228 @@ def next_action(
             "target_claim_id": open_claim.id,
         }
     return {"type": "stop", "reason": "no open claims and planner unavailable"}
+
+
+# ── Strategist turn (meta-loop reflection) ───────────────────────────────────
+# Triggered (a) when the tactical loop has stalled — consecutive turns with
+# no claim updates — and (b) periodically every N tactical loops, even when
+# the loop is making progress, so re-planning isn't only reactive.
+#
+# Output: a single LLM call that produces a diagnosis + plan revisions
+# (priority changes, abandonments, new claims) AND a recommended next
+# action that explicitly breaks whatever stalemate it diagnosed.
+
+
+_STRATEGIST_SYSTEM = (
+    "You are a research strategist. The tactical research loop has either "
+    "stalled or hit a periodic re-plan checkpoint, and you're being asked to "
+    "step back and revise the plan rather than pick another tactical action.\n\n"
+    "Look at the live claims model and recent actions, then:\n"
+    "  1. **Diagnose** why progress has stopped. Common patterns: all evidence "
+    "from one aggregator (rocketreach / zoominfo / signalhire); claim too vague "
+    "to verify directly; subject's online profile is genuinely sparse; we keep "
+    "fetching gated pages (LinkedIn 403, paywalled sources); the same query is "
+    "being repeated; we have a partial claim but every fetch returns the same "
+    "fact already in the snippet.\n"
+    "  2. **Decide what to change in the plan:**\n"
+    "     - Update priorities — raise claims most likely to yield given remaining "
+    "budget; lower or abandon dead-ends.\n"
+    "     - Abandon claims that are hopeless within remaining budget. Be direct: "
+    "abandoning is a valid move, not a failure.\n"
+    "     - Add NEW claims that the current set is missing — narrower formulations "
+    "of stuck claims, or alternative angles (e.g. 'subject lists a personal "
+    "website', 'subject is named in a press release in 2023').\n"
+    "  3. **Recommend the next concrete action** that breaks the stalemate. Do NOT "
+    "repeat a recent action verbatim. If the stuck claim is at PARTIAL with one "
+    "aggregator source, propose a non-aggregator probe. If the loop has been "
+    "searching variations of the same query, propose a structurally different "
+    "search (e.g. site:registry.org instead of name+org keywords).\n\n"
+    "Output STRICT JSON and nothing else:\n"
+    "{\n"
+    '  "diagnosis": "<one or two sentences>",\n'
+    '  "priority_updates": [{"claim_id": "<id>", "new_priority": 0.0-1.0}],\n'
+    '  "abandon": ["<claim_id>", ...],\n'
+    '  "new_claims": [{"text": "<concrete verifiable claim>", "priority": 0.0-1.0}],\n'
+    '  "next_action": {"type": "search"|"fetch", "query": "<...>", "url": "<...>", "target_claim_id": "<id or null>"}\n'
+    "}\n\n"
+    "Empty arrays are fine if there's nothing to revise. The next_action is "
+    "REQUIRED — even if the plan revision is the main contribution, give the "
+    "tactical loop something concrete to execute next."
+)
+
+
+def _strategist_user_prompt(cm: ClaimsModel, available_urls: Optional[list[dict]] = None) -> str:
+    # Render claims grouped by status so the strategist sees the shape of progress.
+    by_status: dict[str, list[Claim]] = {}
+    for c in cm.claims.values():
+        by_status.setdefault(c.status.value, []).append(c)
+
+    sections: list[str] = []
+    for status_label in ("supported", "partial", "investigating", "unknown", "refuted", "abandoned"):
+        cs = by_status.get(status_label, [])
+        if not cs:
+            continue
+        cs.sort(key=lambda c: -c.priority)
+        lines = [f"  ({status_label.upper()}, {len(cs)})"]
+        for c in cs:
+            sup = ", ".join(s.url[:60] for s in c.support[:3]) or "-"
+            lines.append(
+                f"  - id={c.id} priority={c.priority:.2f} conf={c.confidence:.2f} "
+                f"attempts={c.attempts}\n"
+                f"    claim: {c.text}\n"
+                f"    support: {sup}"
+            )
+        sections.append("\n".join(lines))
+
+    actions_lines: list[str] = []
+    for a in cm.recent_actions(8):
+        act = a.get("action", {})
+        descr = act.get("query") or act.get("url") or act.get("reason") or ""
+        res = (a.get("result") or "").replace("\n", " ")[:120]
+        actions_lines.append(f"  - [{act.get('type','?')}] {descr[:80]}  →  {res or '(no result)'}")
+
+    url_lines: list[str] = []
+    for item in (available_urls or [])[:8]:
+        u = item.get("url", "")
+        if not u:
+            continue
+        url_lines.append(f"  - {u}  ({item.get('title','')[:60]})")
+
+    budget = cm.budget
+    return (
+        f"QUERY: {cm.query}\n\n"
+        f"BUDGET: fetches {budget.fetches_used}/{budget.max_fetches}, "
+        f"searches {budget.searches_used}/{budget.max_searches}, "
+        f"llm_calls {budget.llm_calls_used}/{budget.max_llm_calls}, "
+        f"loops {budget.loops_used}/{budget.max_loop_iterations}, "
+        f"wallclock {budget.remaining_wallclock():.0f}s left\n\n"
+        "CLAIMS BY STATUS:\n"
+        + ("\n\n".join(sections) if sections else "  (none)")
+        + "\n\n"
+        "RECENT ACTIONS (last 8):\n"
+        + ("\n".join(actions_lines) if actions_lines else "  (none)")
+        + "\n\n"
+        "AVAILABLE TO FETCH (URLs surfaced, not yet fetched):\n"
+        + ("\n".join(url_lines) if url_lines else "  (none)")
+        + "\n\n"
+        "Diagnose the stall, revise the plan, and recommend the next action. "
+        "Output only the JSON."
+    )
+
+
+def strategic_replan(
+    cm: ClaimsModel,
+    llm: LLMFn,
+    available_urls: Optional[list[dict]] = None,
+) -> dict:
+    """One LLM call returning a diagnosis + plan revisions + next action.
+
+    Always returns a dict with the expected shape — on parse failure the
+    caller still gets a usable fallback `next_action` (typically a search
+    on the highest-priority open claim's text) plus an explanatory diagnosis.
+    """
+    raw = llm(_STRATEGIST_SYSTEM, _strategist_user_prompt(cm, available_urls))
+    parsed = _parse_json(raw or "")
+
+    out: dict = {
+        "diagnosis":        "",
+        "priority_updates": [],
+        "abandon":          [],
+        "new_claims":       [],
+        "next_action":      None,
+        "parse_failed":     False,
+    }
+
+    if not isinstance(parsed, dict):
+        out["parse_failed"] = True
+        out["diagnosis"] = "Strategist LLM call failed or returned unparseable output."
+        # Pick a tactical fallback so the loop can still progress.
+        oc = cm.highest_priority_open()
+        if available_urls:
+            url = (available_urls[0] or {}).get("url")
+            if url:
+                out["next_action"] = {
+                    "type": "fetch", "url": url,
+                    "target_claim_id": oc.id if oc else None,
+                }
+        elif oc:
+            out["next_action"] = {
+                "type": "search", "query": oc.text[:200],
+                "target_claim_id": oc.id,
+            }
+        else:
+            out["next_action"] = {"type": "stop", "reason": "strategist unavailable and no open claims"}
+        return out
+
+    out["diagnosis"] = str(parsed.get("diagnosis", "")).strip()[:500]
+
+    # Priority updates: only apply to claims that actually exist.
+    for upd in parsed.get("priority_updates", []) or []:
+        if not isinstance(upd, dict):
+            continue
+        cid = str(upd.get("claim_id", "")).strip()
+        if cid not in cm.claims:
+            continue
+        try:
+            new_p = float(upd.get("new_priority", -1))
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= new_p <= 1.0:
+            out["priority_updates"].append({"claim_id": cid, "new_priority": new_p})
+
+    # Abandon list: only valid claim ids that aren't already terminal.
+    for cid in parsed.get("abandon", []) or []:
+        cid = str(cid).strip()
+        if cid in cm.claims and not cm.claims[cid].status.terminal:
+            out["abandon"].append(cid)
+
+    # New claims: dedupe against existing claim text.
+    seen_texts = {re.sub(r"\s+", " ", c.text.lower()) for c in cm.claims.values()}
+    for nc in parsed.get("new_claims", []) or []:
+        if not isinstance(nc, dict):
+            continue
+        text = str(nc.get("text", "")).strip()
+        if not text or len(text) < 8:
+            continue
+        norm = re.sub(r"\s+", " ", text.lower())
+        if norm in seen_texts:
+            continue
+        seen_texts.add(norm)
+        try:
+            priority = float(nc.get("priority", 0.5))
+        except (TypeError, ValueError):
+            priority = 0.5
+        out["new_claims"].append({
+            "text": text,
+            "priority": max(0.0, min(1.0, priority)),
+        })
+
+    # Next action: re-use the same parsing logic as next_action() to keep
+    # behaviour consistent. Default to a tactical fallback if missing.
+    na = parsed.get("next_action") or {}
+    if isinstance(na, dict):
+        t = str(na.get("type", "")).strip().lower()
+        if t == "search" and str(na.get("query", "")).strip():
+            out["next_action"] = {
+                "type": "search",
+                "query": str(na["query"]).strip(),
+                "target_claim_id": na.get("target_claim_id") or None,
+            }
+        elif t == "fetch" and str(na.get("url", "")).startswith(("http://", "https://")):
+            out["next_action"] = {
+                "type": "fetch",
+                "url": str(na["url"]).strip(),
+                "target_claim_id": na.get("target_claim_id") or None,
+            }
+    if not out["next_action"]:
+        oc = cm.highest_priority_open()
+        if oc:
+            out["next_action"] = {
+                "type": "search",
+                "query": oc.text[:200],
+                "target_claim_id": oc.id,
+            }
+        else:
+            out["next_action"] = {"type": "stop", "reason": "strategist returned no actionable next step"}
+
+    return out

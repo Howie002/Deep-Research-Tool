@@ -72,6 +72,15 @@ class Claim:
             "contradictions": [e.to_dict() for e in self.contradictions],
         }
 
+    def abandon(self, reason: str = "") -> None:
+        """Mark this claim as ABANDONED. Used by the strategist when a claim
+        is hopeless within remaining budget. Reason is stored on the action
+        log via the worker, not on the claim itself."""
+        if self.status.terminal:
+            return     # don't overwrite SUPPORTED/REFUTED
+        self.status = ClaimStatus.ABANDONED
+        self.last_update_at = time.time()
+
     def add_evidence(self, ev: Evidence, confidence_delta: float) -> None:
         if ev.supports:
             self.support.append(ev)

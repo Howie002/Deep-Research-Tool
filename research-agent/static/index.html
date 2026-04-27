@@ -1113,6 +1113,20 @@ function handleStreamEvent(ev) {
     // ── Adaptive-loop events (dev2) ─────────────────────────────────────
     // No claims-board UI yet — those are roadmapped. For now render a
     // concise summary line so the feed reads cleanly.
+    case 'strategist': {
+      // Meta-loop reflection turn. Renders the diagnosis + a short
+      // summary of plan revisions on a single visible row.
+      const parts = [];
+      if (ev.priority_updates && ev.priority_updates.length) parts.push(`${ev.priority_updates.length} re-prioritised`);
+      if (ev.abandoned && ev.abandoned.length)               parts.push(`${ev.abandoned.length} abandoned`);
+      if (ev.new_claim_count)                                parts.push(`${ev.new_claim_count} new`);
+      const meta = parts.length ? ' · ' + parts.join(' · ') : '';
+      const diag = (ev.diagnosis || '').replace(/\s+/g, ' ').trim();
+      appendStreamRow('ev-step font-medium',
+        `${ts(ev.ts)}<span style="color:#a78bfa;font-weight:600">🎯 Strategist:</span> <span style="color:var(--text)">${esc(diag).slice(0,260)}</span><span style="color:var(--subtle);font-size:.7rem">${esc(meta)}</span>`);
+      break;
+    }
+
     case 'claims_snapshot': {
       const m = ev.model || {};
       const counts = {};

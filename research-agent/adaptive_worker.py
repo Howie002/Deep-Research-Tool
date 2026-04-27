@@ -29,7 +29,7 @@ from typing import Callable, Optional
 
 from claims import Claim, ClaimsModel, ClaimStatus, Evidence, preset_budget
 from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
-from adaptive_planner import decompose_query, next_action
+from adaptive_planner import decompose_query, next_action, strategic_replan
 from adaptive_evaluator import integrate_result
 
 
@@ -279,7 +279,14 @@ def run_adaptive(
 
     # ── 2. Main loop ────────────────────────────────────────────────────
     consecutive_unproductive = 0
-    consecutive_searches = 0                # circuit-breaker counter
+    consecutive_searches = 0                  # tactical circuit-breaker counter
+    # Strategist controls — replace stop-on-stagnation with re-plan-on-stagnation.
+    PERIODIC_STRATEGIST_INTERVAL = 5          # also re-plan every N tactical loops
+    STAGNATION_TRIGGER = 3                    # consecutive unproductive turns → strategist
+    MAX_STRATEGIST_TURNS = 5                  # per-run hard cap on meta-loop calls
+    strategist_turns = 0
+    strategist_zero_change_streak = 0
+    loops_since_last_strategist = 0
     # URLs discovered by searches but not yet fetched. Entries are
     # {"url", "title", "snippet"}; de-duped by URL. The planner sees
     # this list so it can propose fetches naturally.
@@ -287,6 +294,7 @@ def run_adaptive(
     _seen_surfaced: set[str] = set()
 
     while True:
+        # ── Hard stops only — stagnation no longer ends the run ─────────
         reason = cm.budget.exhausted()
         if reason:
             _log(f"Stopping — budget exhausted: {reason}.", agent="Planner")
@@ -294,41 +302,88 @@ def run_adaptive(
         if cm.is_satisfied():
             _log("Stopping — claims sufficiently supported.", agent="Planner")
             break
-        if cm.is_stagnating():
-            _log("Stopping — no recent progress.", agent="Planner")
-            break
-        if consecutive_unproductive >= 4:
-            _log("Stopping — 4 consecutive unproductive iterations.", agent="Planner")
+        if strategist_zero_change_streak >= 2:
+            _log("Stopping — strategist has no further suggestions (2 zero-change turns).",
+                 agent="Strategist")
             break
 
         cm.budget.loops_used += 1
-
         # Drop already-fetched URLs from the surfaced queue so the
         # planner isn't tempted to refetch.
         surfaced_urls = [s for s in surfaced_urls if s["url"] not in cm.fetched_urls]
 
-        # ── 2a. Planner picks next action ──────────────────────────────
-        action = next_action(cm, llm, available_urls=surfaced_urls)
+        # ── Decide: tactical turn or strategist turn? ───────────────────
+        # Strategist runs on stagnation OR periodically OR when we've
+        # never run one yet but tactical loop is asking to stop.
+        needs_strategist = (
+            (consecutive_unproductive >= STAGNATION_TRIGGER)
+            or (loops_since_last_strategist >= PERIODIC_STRATEGIST_INTERVAL
+                and cm.budget.loops_used > 1)
+        )
 
-        # Circuit-breaker: if the planner has proposed three searches in
-        # a row and there are surfaced URLs waiting to be fetched, force
-        # a fetch of the most promising available URL.
-        if (
-            action["type"] == "search"
-            and consecutive_searches >= 2
-            and surfaced_urls
-        ):
-            forced = surfaced_urls[0]
+        if needs_strategist and strategist_turns < MAX_STRATEGIST_TURNS:
+            strategist_turns += 1
+            loops_since_last_strategist = 0
+            replan = strategic_replan(cm, llm, available_urls=surfaced_urls)
             _log(
-                f"Circuit-breaker: 3 searches without a fetch → forcing fetch of "
-                f"{forced['url']}",
-                agent="Planner",
+                f"🎯 Strategist (turn {strategist_turns}/{MAX_STRATEGIST_TURNS}): "
+                f"{replan['diagnosis'] or '(no diagnosis given)'}",
+                agent="Strategist",
             )
-            action = {
-                "type": "fetch",
-                "url":  forced["url"],
-                "target_claim_id": action.get("target_claim_id"),
-            }
+            # Apply plan revisions
+            changes = 0
+            for upd in replan.get("priority_updates", []):
+                cid = upd["claim_id"]
+                old_p = cm.claims[cid].priority
+                cm.claims[cid].priority = upd["new_priority"]
+                _log(f"  priority: {cm.claims[cid].text[:60]}  {old_p:.2f} → {upd['new_priority']:.2f}",
+                     agent="Strategist")
+                changes += 1
+            for cid in replan.get("abandon", []):
+                if cid in cm.claims and not cm.claims[cid].status.terminal:
+                    cm.claims[cid].abandon()
+                    _log(f"  abandoned: {cm.claims[cid].text[:80]}", agent="Strategist")
+                    changes += 1
+            for nc in replan.get("new_claims", []):
+                new = cm.add_claim(nc["text"], priority=nc["priority"])
+                _log(f"  new claim ({new.priority:.2f}): {new.text}", agent="Strategist")
+                changes += 1
+            if changes == 0:
+                strategist_zero_change_streak += 1
+            else:
+                strategist_zero_change_streak = 0
+            _emit({"type": "strategist", "diagnosis": replan["diagnosis"],
+                   "priority_updates": replan.get("priority_updates", []),
+                   "abandoned": replan.get("abandon", []),
+                   "new_claim_count": len(replan.get("new_claims", [])),
+                   "next_action_type": (replan.get("next_action") or {}).get("type", "")})
+            _emit({"type": "claims_snapshot", "model": cm.to_dict()})
+            # The strategist's recommended next action drives this loop turn.
+            action = replan["next_action"] or {"type": "stop", "reason": "strategist returned no action"}
+            consecutive_unproductive = 0
+        else:
+            # ── Tactical turn ──────────────────────────────────────────
+            loops_since_last_strategist += 1
+            action = next_action(cm, llm, available_urls=surfaced_urls)
+            # Circuit-breaker: if the planner has proposed three searches in
+            # a row and there are surfaced URLs waiting to be fetched, force
+            # a fetch of the most promising available URL.
+            if (
+                action["type"] == "search"
+                and consecutive_searches >= 2
+                and surfaced_urls
+            ):
+                forced = surfaced_urls[0]
+                _log(
+                    f"Circuit-breaker: 3 searches without a fetch → forcing fetch of "
+                    f"{forced['url']}",
+                    agent="Planner",
+                )
+                action = {
+                    "type": "fetch",
+                    "url":  forced["url"],
+                    "target_claim_id": action.get("target_claim_id"),
+                }
 
         if action["type"] == "stop":
             _log(f"Planner chose to stop: {action.get('reason','')}", agent="Planner")
