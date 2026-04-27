@@ -286,14 +286,15 @@
 <header class="sticky top-0 z-20 border-b" style="background:rgba(11,11,20,.92);backdrop-filter:blur(16px);border-color:var(--border)">
   <div class="max-w-screen-2xl mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
 
-    <!-- Logo -->
-    <div class="flex items-center gap-3">
+    <!-- Logo / Home button -->
+    <button id="home-btn" type="button" class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+            style="background:transparent;border:none;padding:0" title="Return to dashboard">
       <div class="w-8 h-8 rounded-lg brand-gradient flex items-center justify-center text-white text-sm font-bold shadow-lg" style="box-shadow:0 0 16px rgba(99,102,241,.4)">R</div>
-      <div>
+      <div class="text-left">
         <h1 class="text-sm font-semibold leading-none" style="color:var(--text)">Research Agent</h1>
         <p class="text-xs mt-0.5" style="color:var(--muted)">CrewAI · LM Studio · Live Workspace</p>
       </div>
-    </div>
+    </button>
 
     <!-- Right controls -->
     <div class="flex items-center gap-2.5">
@@ -2022,6 +2023,40 @@ function renderDashboard(reports) {
   }).join('');
 }
 
+// ── Home button: return to dashboard ────────────────────────────────────────
+// Clicking the Research Agent brand resets the workspace view and returns
+// to the idle dashboard. If a job is currently streaming, the user is asked
+// before we unhook the stream — the worker keeps running in the background
+// either way, and they can come back to the report when it's done.
+function returnToDashboard() {
+  const jobActive = state.jobId && state.es;
+  if (jobActive) {
+    if (!confirm("A research run is in progress. Return to the dashboard?\n\nThe run will keep going in the background — your report will appear in the sidebar when it finishes.")) {
+      return;
+    }
+    // Detach the stream so the UI stops echoing events; the worker is unaffected.
+    try { state.es.close(); } catch {}
+    state.es = null;
+  }
+  // Reset visible workspace
+  state.activeReportFile = null;
+  if (typeof reportCard   !== 'undefined' && reportCard)   reportCard.classList.add('hidden');
+  if (typeof streamCard   !== 'undefined' && streamCard)   streamCard.classList.add('hidden');
+  if (typeof pipelineBar  !== 'undefined' && pipelineBar)  pipelineBar.classList.add('hidden');
+  if (typeof workspace    !== 'undefined' && workspace)    workspace.classList.add('hidden');
+  const artCard = $('artifacts-card'); if (artCard) artCard.classList.add('hidden');
+  const idle = $('idleSidebar') || $('idle-sidebar'); if (idle) idle.classList.remove('hidden');
+  showDashboard();
+  // Re-render the reports list so the active highlight clears
+  renderReportsList(window._cachedReports || [], 'reports-list');
+  renderReportsList(window._cachedReports || [], 'reports-list-idle');
+  // Bring the page back to the top so the user lands on the query form
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+const _homeBtn = $('home-btn');
+if (_homeBtn) _homeBtn.addEventListener('click', returnToDashboard);
+
 // ── Reports sidebar ──────────────────────────────────────────────────────────
 async function loadReports() {
   try {
@@ -2045,14 +2080,61 @@ function renderReportsList(reports, listId) {
   }
   el.innerHTML = '';
   for (const r of reports) {
-    const btn = document.createElement('button');
+    // Wrap so the delete-x can sit on the right without breaking the
+    // "click anywhere on the row to open" UX.
+    const row = document.createElement('div');
+    row.className = 'relative group';
     const isActive = r.filename === state.activeReportFile;
+
+    const btn = document.createElement('button');
     btn.className = `report-item w-full text-left px-3 py-2.5 text-xs${isActive?' active':''}`;
     btn.innerHTML = `
-      <p class="font-medium truncate" style="color:${isActive?'#a5b4fc':'var(--text)'}" title="${esc(r.query)}">${esc(r.query.length>55 ? r.query.slice(0,55)+'…' : r.query)}</p>
+      <p class="font-medium truncate pr-6" style="color:${isActive?'#a5b4fc':'var(--text)'}" title="${esc(r.query)}">${esc(r.query.length>55 ? r.query.slice(0,55)+'…' : r.query)}</p>
       <p class="mt-0.5" style="color:var(--muted)">${r.created}</p>`;
     btn.addEventListener('click', () => viewReport(r.filename));
-    el.appendChild(btn);
+    row.appendChild(btn);
+
+    const del = document.createElement('button');
+    del.className = 'absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity';
+    del.style.cssText = 'background:transparent;color:var(--muted);border:1px solid transparent';
+    del.title = 'Delete this report';
+    del.setAttribute('aria-label', `Delete report: ${r.query}`);
+    del.innerHTML = '×';
+    del.addEventListener('mouseenter', () => {
+      del.style.color = '#f87171';
+      del.style.background = 'rgba(248,113,113,.10)';
+      del.style.borderColor = 'rgba(248,113,113,.4)';
+    });
+    del.addEventListener('mouseleave', () => {
+      del.style.color = 'var(--muted)';
+      del.style.background = 'transparent';
+      del.style.borderColor = 'transparent';
+    });
+    del.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const truncated = r.query.length > 80 ? r.query.slice(0,80) + '…' : r.query;
+      if (!confirm(`Delete this run permanently?\n\n"${truncated}"\n\nThe report and all artifacts (claims, fetched pages, audit trail) will be removed.`)) return;
+      try {
+        const res = await fetch(`/api/reports/${encodeURIComponent(r.filename)}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(`Delete failed: ${err.detail || `HTTP ${res.status}`}`);
+          return;
+        }
+        // If the deleted report was open, drop the active state and return to dashboard view.
+        if (state.activeReportFile === r.filename) {
+          state.activeReportFile = null;
+          reportCard.classList.add('hidden');
+          $('artifacts-card').classList.add('hidden');
+        }
+        await loadReports();
+      } catch (e) {
+        alert(`Delete failed: ${e.message}`);
+      }
+    });
+    row.appendChild(del);
+
+    el.appendChild(row);
   }
 }
 

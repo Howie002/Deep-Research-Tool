@@ -761,6 +761,47 @@ async def get_report(filename: str) -> ReportDetailResponse:
     )
 
 
+@app.delete("/api/reports/{filename}", dependencies=[Depends(verify_api_key)])
+async def delete_report(filename: str) -> dict:
+    """Delete a saved report and its artifacts directory.
+
+    Removes the .md file, the per-run artifacts directory of the same prefix,
+    the run's tag entry, and the run's index row. Idempotent — calling on a
+    missing report returns 404 once, then succeeds with deleted=False on
+    repeats (since nothing remains).
+    """
+    filename = Path(filename).name  # prevent directory traversal
+    if not filename.endswith(".md"):
+        raise HTTPException(status_code=400, detail="Invalid report filename.")
+    report_path = REPORTS_DIR / filename
+    art_dir = REPORTS_DIR / Path(filename).stem
+    if not report_path.exists() and not art_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Report '{filename}' not found.")
+
+    removed = {"report": False, "artifacts": False}
+    try:
+        if report_path.exists():
+            report_path.unlink()
+            removed["report"] = True
+        if art_dir.exists() and art_dir.is_dir():
+            import shutil
+            shutil.rmtree(art_dir)
+            removed["artifacts"] = True
+        # Drop from tags + index so the UI list refreshes correctly.
+        with _TAGS_LOCK:
+            data = _load_tags(REPORTS_DIR)
+            if filename in data:
+                data.pop(filename)
+                _save_tags(REPORTS_DIR, data)
+        idx = _load_index(REPORTS_DIR)
+        idx = [e for e in idx if e.get("filename") != filename]
+        _save_index(REPORTS_DIR, idx)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {exc}")
+
+    return {"filename": filename, "deleted": True, "removed": removed}
+
+
 @app.post("/api/reports/{filename}/tags", response_model=TagsResponse)
 async def set_tags(filename: str, body: TagUpdateRequest) -> TagsResponse:
     """Replace all tags on a report. Body: {"tags": ["ai", "finance"]}."""

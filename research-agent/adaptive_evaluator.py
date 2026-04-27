@@ -34,7 +34,9 @@ _EVAL_SYSTEM = (
     "Output STRICT JSON and nothing else:\n"
     "{\n"
     '  "updates": [\n'
-    '    {"claim_id": "<id>", "supports": true|false, "quote": "<short verbatim>", "confidence_delta": 0.05-0.5}\n'
+    '    {"claim_id": "<id>", "supports": true|false, "quote": "<short verbatim>",\n'
+    '     "source_url": "<the EXACT URL of the source the quote came from>",\n'
+    '     "confidence_delta": 0.05-0.5}\n'
     "  ],\n"
     '  "new_claims": [\n'
     '    {"text": "<short verifiable claim>", "priority": 0.0-1.0, "parent_claim_id": "<id or null>"}\n'
@@ -43,11 +45,34 @@ _EVAL_SYSTEM = (
     "Rules:\n"
     " - Be STRICT. 'Evidence' means the page actually contains the claim — topical "
     "adjacency is not support.\n"
+    " - **`source_url` is REQUIRED on every update.** When the evidence is a search-result "
+    "list, each result has its OWN `URL: <link>` line — copy the URL of the SPECIFIC "
+    "result the quote came from. When the evidence is a fetched page, the page's URL is "
+    "given as 'SOURCE URL: …' in the input — use that.\n"
+    " - **Quote rules:** at least 10 characters, must appear verbatim (or near-verbatim) "
+    "in the evidence text. NEVER output 'None', 'null', 'N/A' or any other placeholder "
+    "string as a quote — if no real quote exists, omit the update entirely.\n"
     " - confidence_delta: 0.5 for strong primary-source confirmation, 0.3 for solid "
     "secondary, 0.15 for mere mention, NEGATIVE only if evidence refutes.\n"
     " - Only raise new claims that are concrete and verifiable — skip vague assertions.\n"
     " - If nothing in the evidence addresses any claim, return empty arrays."
 )
+
+
+# Quotes that callers (or the LLM) sometimes emit as placeholders. Treated
+# as 'no real evidence' and skipped.
+_PLACEHOLDER_QUOTES = {"none", "null", "n/a", "na", "(none)", "no quote", "no evidence", ""}
+
+
+def _is_real_quote(quote: str) -> bool:
+    if not quote:
+        return False
+    cleaned = quote.strip().strip("'\"`").strip()
+    if cleaned.lower() in _PLACEHOLDER_QUOTES:
+        return False
+    if len(cleaned) < 10:
+        return False
+    return True
 
 
 def _claims_digest(cm: ClaimsModel) -> str:
@@ -127,8 +152,26 @@ def integrate_result(
         claim = cm.claims[claim_id]
         supports = bool(upd.get("supports"))
         quote = str(upd.get("quote", "")).strip()
-        if not quote:
+        # Reject placeholder / "None" / too-short quotes — without this filter
+        # an LLM that emits "quote": "None" can flip a claim to REFUTED on
+        # what is effectively no evidence at all.
+        if not _is_real_quote(quote):
             continue
+        # Per-update source URL is required when the action was a search
+        # (each result has its own URL). For a fetch the page-level URL is
+        # the natural fallback. If a search-derived update arrives without
+        # a URL, drop it — citations without sources defeat the architecture.
+        per_url = str(upd.get("source_url", "")).strip()
+        if per_url and per_url.startswith(("http://", "https://")):
+            ev_url = per_url
+        elif evidence_url:
+            ev_url = evidence_url
+        elif evidence_kind == "fetch":
+            ev_url = evidence_url       # may be empty; rare
+        else:
+            # Search-derived update with no per-update URL → unusable.
+            continue
+
         try:
             delta = float(upd.get("confidence_delta", 0.0))
         except (TypeError, ValueError):
@@ -139,7 +182,7 @@ def integrate_result(
 
         claim.add_evidence(
             Evidence(
-                url=evidence_url,
+                url=ev_url,
                 quote=quote[:300],
                 supports=supports,
                 category=evidence_category,
