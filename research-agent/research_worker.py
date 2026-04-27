@@ -275,6 +275,7 @@ def main() -> None:
         data = json.loads(job_file.read_text(encoding="utf-8"))
         query = data["query"]
         depth = str(data.get("depth", "medium")).lower()
+        clarifications = str(data.get("clarifications", ""))
     except Exception as exc:
         job_file.write_text(
             json.dumps({"status": "error", "query": "", "log": [], "result": f"Failed to read job file: {exc}"}),
@@ -286,6 +287,8 @@ def main() -> None:
     from adaptive_worker import run_adaptive
     sp = Scratchpad(job_id, jobs_dir)
     sp.log(f"Starting adaptive research loop (depth={depth}) for: \"{query}\"")
+    if clarifications.strip():
+        sp.log(f"With user clarifications: \"{clarifications.strip()[:140]}…\"")
 
     try:
         report, _claims = run_adaptive(
@@ -294,6 +297,7 @@ def main() -> None:
             job_id=job_id,
             jobs_dir=jobs_dir,
             log_fn=sp.log,
+            clarifications=clarifications,
         )
         sp.stream_event({"type": "done", "status": "complete", "result": report})
 

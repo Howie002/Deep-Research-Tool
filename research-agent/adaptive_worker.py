@@ -64,13 +64,15 @@ def _harvest_search_urls(search_text: str) -> list[dict]:
 # ── Minimal LLM caller (no LiteLLM / CrewAI dependency) ──────────────────────
 
 
-def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[[str, str], Optional[str]]:
-    """Return an (system, user) -> content callable that tracks usage.
+def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[..., Optional[str]]:
+    """Return an (system, user, max_tokens=...) -> content callable that tracks usage.
 
     track_fn is called every time a request is ISSUED (success or failure),
-    so budget accounting works even if LM Studio errors.
+    so budget accounting works even if LM Studio errors. The optional
+    `max_tokens` lets the prose synthesis call ask for more headroom than
+    the default short-prompt budget.
     """
-    def call(system: str, user: str) -> Optional[str]:
+    def call(system: str, user: str, *, max_tokens: int = 1200) -> Optional[str]:
         track_fn()
         payload = {
             "model": LM_STUDIO_MODEL,
@@ -79,12 +81,20 @@ def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[[str, str], Opti
                 {"role": "user",   "content": user},
             ],
             "temperature": 0.2,
-            "max_tokens": 1200,
+            "max_tokens": max_tokens,
             "presence_penalty": 0.1,
             "frequency_penalty": 0.3,
+            # Disable reasoning-model "thinking" so the model's chain-of-thought
+            # doesn't leak into the response content. Some LM Studio models
+            # ignore this; combined with the post-pass stripper below it's
+            # belt-and-suspenders against scaffolding bleed-through.
+            "enable_thinking": False,
+            "reasoning": False,
+            # repetition / repeat penalty — Gemma in particular needs this
+            # to avoid token-loop collapse on long outputs.
+            "repetition_penalty": 1.15,
+            "repeat_penalty": 1.15,
         }
-        # Some LM Studio models support these via extra_body; harmless otherwise.
-        payload["repetition_penalty"] = 1.15
         req = urllib.request.Request(
             LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -92,9 +102,8 @@ def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[[str, str], Opti
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=180) as resp:
+            with urllib.request.urlopen(req, timeout=240) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
-            # Prefer content; fall back to reasoning_content if the model is a thinking variant.
             msg = body.get("choices", [{}])[0].get("message", {}) or {}
             return (msg.get("content") or msg.get("reasoning_content") or "").strip() or None
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError):
@@ -154,24 +163,72 @@ def _emit_plan_panel(cm: ClaimsModel, emit) -> None:
         pass
 
 
-def _emit_notes_panel(cm: ClaimsModel, emit, claim_ids: list[str]) -> None:
-    """For each updated claim with new Evidence, emit a `note_add` event with the latest quote + URL."""
-    for cid in claim_ids:
-        c = cm.claims.get(cid)
-        if not c or not c.support:
-            continue
-        ev = c.support[-1]   # latest evidence
-        note_md = (
-            f"**{c.text}**  ·  _{c.status.value}_  ·  conf {c.confidence:.2f}\n\n"
-            f"> \"{ev.quote}\"\n\n"
-            f"— [{ev.url}]({ev.url})"
-        )
+def _emit_final_notes(cm: ClaimsModel, emit) -> None:
+    """At end-of-run, emit one curated takeaway note per claim with evidence.
+
+    Each note is a structured takeaway (not a raw quote dump):
+      - The claim itself, phrased as a takeaway statement
+      - A one-line synthesis based on the supporting evidence
+      - Each unique source URL with its supporting quote underneath
+      - Tension/contradiction notes if any sources disagreed
+
+    This replaces the earlier per-evidence emission which produced one note
+    per Evidence object — that left the Notes tab as a noisy duplicate-laden
+    dump rather than a curated synthesis.
+    """
+    # Order: supported first (highest conf), then partial, then refuted/abandoned.
+    order_keys = {
+        "supported":    0,
+        "partial":      1,
+        "investigating": 2,
+        "refuted":      3,
+        "abandoned":    4,
+        "unknown":      5,
+    }
+    claims = sorted(
+        [c for c in cm.claims.values() if c.support or c.contradictions],
+        key=lambda c: (order_keys.get(c.status.value, 9), -c.confidence, -c.priority),
+    )
+    for c in claims:
+        # Status badge + confidence
+        status_badge = {
+            "supported":     "✓ supported",
+            "partial":       "◐ partial",
+            "investigating": "↻ investigating",
+            "refuted":       "✗ refuted",
+            "abandoned":     "— abandoned",
+            "unknown":       "□ open",
+        }.get(c.status.value, c.status.value)
+
+        # Build a single takeaway block per claim.
+        lines = [
+            f"**{c.text}**",
+            f"_{status_badge}  ·  confidence {c.confidence:.2f}  ·  "
+            f"{len(c.support)} supporting / {len(c.contradictions)} contradicting_",
+            "",
+        ]
+
+        # Group supporting quotes by URL so duplicates collapse.
+        seen_urls: set[str] = set()
+        for ev in c.support:
+            if ev.url in seen_urls:
+                continue
+            seen_urls.add(ev.url)
+            lines.append(f"> \"{ev.quote}\"")
+            lines.append(f">")
+            lines.append(f"> — [{ev.url}]({ev.url})")
+            lines.append("")
+
+        if c.contradictions:
+            lines.append("**Sources in tension:**")
+            for ev in c.contradictions:
+                lines.append(f"- \"{ev.quote}\" — [{ev.url}]({ev.url})")
+            lines.append("")
+
         try:
             emit({
-                "type":       "note_add",
-                "content":    note_md,
-                "source_url": ev.url,
-                "quote":      ev.quote,
+                "type":    "note_add",
+                "content": "\n".join(lines).rstrip(),
             })
         except Exception:
             pass
@@ -278,6 +335,31 @@ def _strip_ghost_urls(prose: str, allowed_urls: set[str]) -> tuple[str, list[str
     return cleaned, list(set(stripped))
 
 
+def _trim_prose_scaffolding(raw: str) -> str:
+    """Strip chain-of-thought / planning scaffolding the model emits before
+    the actual brief.
+
+    Reasoning-tuned local models (Gemma 4 -a4b, etc.) often write a planning
+    block — "Subject: ...", "Goal: ...", "Constraint Check: ...", "Drafting
+    Final Version:" — before the final answer. We want only the answer.
+
+    Strategy: locate the first ``## Summary`` heading and discard everything
+    before it. If no summary heading exists, fall back to whatever the model
+    produced after the first H2 heading. If neither exists, return raw.
+    """
+    if not raw:
+        return raw
+    # Prefer the first '## Summary' heading.
+    m = re.search(r"^\s*##\s*Summary\b", raw, flags=re.IGNORECASE | re.MULTILINE)
+    if m:
+        return raw[m.start():].strip()
+    # Fallback: any ## heading.
+    m = re.search(r"^\s*##\s+\S", raw, flags=re.MULTILINE)
+    if m:
+        return raw[m.start():].strip()
+    return raw.strip()
+
+
 def synthesize_prose(cm: ClaimsModel, llm) -> tuple[str, list[str]]:
     """LLM-polish pass: write a narrative report grounded in the claims model.
 
@@ -299,12 +381,16 @@ def synthesize_prose(cm: ClaimsModel, llm) -> tuple[str, list[str]]:
         f"EVIDENCE FROM THE INVESTIGATION:\n{_evidence_for_prose(cm)}\n\n"
         f"ALLOWED URLS (cite only these):\n"
         + "\n".join(f"  - {u}" for u in sorted(allowed_urls))
-        + "\n\nWrite the brief now. Markdown only — no JSON, no code blocks."
+        + "\n\nWrite the brief now. Begin DIRECTLY with `## Summary` — do not "
+          "write any preamble, planning notes, scaffolding, or self-correction "
+          "before the report itself. Markdown only — no JSON, no code blocks."
     )
-    raw = llm(_PROSE_SYSTEM, user_prompt)
+    raw = llm(_PROSE_SYSTEM, user_prompt, max_tokens=2400)
     if not raw or len(raw.strip()) < 200:
         return "", []
-    cleaned, stripped = _strip_ghost_urls(raw, allowed_urls)
+    # Strip any scaffolding the model leaked before the actual brief.
+    trimmed = _trim_prose_scaffolding(raw)
+    cleaned, stripped = _strip_ghost_urls(trimmed, allowed_urls)
     return cleaned, stripped
 
 
@@ -432,8 +518,15 @@ def run_adaptive(
     job_id: Optional[str] = None,
     jobs_dir: Optional[Path] = None,
     log_fn: Optional[Callable[[str, str], None]] = None,
+    clarifications: str = "",
 ) -> tuple[str, ClaimsModel]:
-    """Run the adaptive loop. Returns (report_markdown, final_claims_model)."""
+    """Run the adaptive loop. Returns (report_markdown, final_claims_model).
+
+    `clarifications` is the user's pre-run scoping text from the
+    Dynamic Clarifying Questions modal — passed into the decomposition step
+    AND threaded into the planner / strategist prompts so the loop stays
+    aligned to the user's intent throughout, not just at start.
+    """
     cm = ClaimsModel(query=query, budget=preset_budget(depth))
 
     # ── Wire observability (reuse existing tools / scratchpad) ─────────
@@ -472,7 +565,7 @@ def run_adaptive(
 
     # ── 1. Decompose ────────────────────────────────────────────────────
     _log(f"Decomposing query into verifiable claims…", agent="Planner")
-    initial = decompose_query(query, llm)
+    initial = decompose_query(query, llm, clarifications=clarifications)
     for ic in initial:
         cm.add_claim(ic["text"], priority=ic["priority"])
     if not cm.claims:
@@ -533,7 +626,8 @@ def run_adaptive(
         if needs_strategist and strategist_turns < MAX_STRATEGIST_TURNS:
             strategist_turns += 1
             loops_since_last_strategist = 0
-            replan = strategic_replan(cm, llm, available_urls=surfaced_urls)
+            replan = strategic_replan(cm, llm, available_urls=surfaced_urls,
+                                      clarifications=clarifications)
             _log(
                 f"🎯 Strategist (turn {strategist_turns}/{MAX_STRATEGIST_TURNS}): "
                 f"{replan['diagnosis'] or '(no diagnosis given)'}",
@@ -580,7 +674,8 @@ def run_adaptive(
         else:
             # ── Tactical turn ──────────────────────────────────────────
             loops_since_last_strategist += 1
-            action = next_action(cm, llm, available_urls=surfaced_urls)
+            action = next_action(cm, llm, available_urls=surfaced_urls,
+                                 clarifications=clarifications)
             # Circuit-breaker: if the planner has proposed three searches in
             # a row and there are surfaced URLs waiting to be fetched, force
             # a fetch of the most promising available URL.
@@ -685,10 +780,9 @@ def run_adaptive(
             "parse_failed":    upd.get("parse_failed", False),
             "budget":          cm.budget.snapshot(),
         })
-        # Push panel updates so Plan / Notes refresh live with each evidence pass.
+        # Push live Plan-panel update each evidence pass (Notes are emitted
+        # as a curated synthesis at end-of-run, not noisily per-evidence).
         if any_progress:
-            updated_ids = [u["id"] for u in upd.get("updated_claims", []) if u.get("support_count", 0) > 0]
-            _emit_notes_panel(cm, _emit, updated_ids)
             _emit_plan_panel(cm, _emit)
         _log(
             f"Evaluator: updated {len(upd.get('updated_claims', []))} claim(s), "
@@ -700,6 +794,8 @@ def run_adaptive(
     # ── 3. Snapshot final state + synthesize ────────────────────────────
     _emit({"type": "claims_snapshot", "model": cm.to_dict()})
     _emit_plan_panel(cm, _emit)
+    # Curated takeaway notes — one per claim with evidence, deduped by URL.
+    _emit_final_notes(cm, _emit)
 
     _log("Rendering final report…", agent="Synthesizer")
 

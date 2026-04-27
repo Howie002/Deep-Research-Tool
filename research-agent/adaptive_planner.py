@@ -52,9 +52,17 @@ _DECOMPOSE_SYSTEM = (
 )
 
 
-def _decompose_user_prompt(query: str) -> str:
+def _decompose_user_prompt(query: str, clarifications: str = "") -> str:
+    clarif_block = ""
+    if clarifications and clarifications.strip():
+        clarif_block = (
+            "\n\nUSER CLARIFICATIONS — these refine scope and priority. Apply them when "
+            "deciding which claims to include and how to set priorities:\n"
+            + clarifications.strip()
+            + "\n"
+        )
     return (
-        f"QUERY: {query}\n\n"
+        f"QUERY: {query}{clarif_block}\n\n"
         "Produce 3-8 generic, verifiable claims. Set priority 1.0 for claims central "
         "to the query's main subject, 0.6 for important supporting claims, 0.3 for "
         "peripheral context. Each claim should be answerable by fetching one or two "
@@ -100,7 +108,11 @@ _NEXT_ACTION_SYSTEM = (
 )
 
 
-def _next_action_user_prompt(cm: ClaimsModel, available_urls: Optional[list[dict]] = None) -> str:
+def _next_action_user_prompt(
+    cm: ClaimsModel,
+    available_urls: Optional[list[dict]] = None,
+    clarifications: str = "",
+) -> str:
     # Render the current state compactly. Top 10 claims max; recent 6 actions.
     claim_lines: list[str] = []
     for c in sorted(cm.claims.values(), key=lambda c: (-c.priority, c.attempts))[:10]:
@@ -139,9 +151,17 @@ def _next_action_user_prompt(cm: ClaimsModel, available_urls: Optional[list[dict
         url_lines.append("\n".join(parts))
 
     budget = cm.budget
+    clarif_block = ""
+    if clarifications and clarifications.strip():
+        clarif_block = (
+            "USER CLARIFICATIONS (constrain action selection — stay aligned to these):\n"
+            + clarifications.strip()
+            + "\n\n"
+        )
     return (
         f"QUERY: {cm.query}\n\n"
-        f"BUDGET: fetches {budget.fetches_used}/{budget.max_fetches}, "
+        + clarif_block
+        + f"BUDGET: fetches {budget.fetches_used}/{budget.max_fetches}, "
         f"searches {budget.searches_used}/{budget.max_searches}, "
         f"llm_calls {budget.llm_calls_used}/{budget.max_llm_calls}, "
         f"wallclock {cm.budget.remaining_wallclock():.0f}s left, "
@@ -185,13 +205,13 @@ def _parse_json(raw: str) -> Optional[dict]:
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
-def decompose_query(query: str, llm: LLMFn) -> list[dict]:
+def decompose_query(query: str, llm: LLMFn, clarifications: str = "") -> list[dict]:
     """Return a list of {text, priority} dicts to be added to the claims model.
 
     On any LLM/parse failure returns an empty list — the caller can fall
     back to a single generic claim like 'answer the user's query'.
     """
-    raw = llm(_DECOMPOSE_SYSTEM, _decompose_user_prompt(query))
+    raw = llm(_DECOMPOSE_SYSTEM, _decompose_user_prompt(query, clarifications))
     parsed = _parse_json(raw or "")
     if not isinstance(parsed, dict):
         return []
@@ -214,6 +234,7 @@ def next_action(
     cm: ClaimsModel,
     llm: LLMFn,
     available_urls: Optional[list[dict]] = None,
+    clarifications: str = "",
 ) -> dict:
     """Return a dict describing the next action.
 
@@ -226,7 +247,7 @@ def next_action(
     surfaced by recent searches that have not yet been fetched. Makes it
     possible for the planner to propose `fetch` actions at all.
     """
-    raw = llm(_NEXT_ACTION_SYSTEM, _next_action_user_prompt(cm, available_urls))
+    raw = llm(_NEXT_ACTION_SYSTEM, _next_action_user_prompt(cm, available_urls, clarifications))
     parsed = _parse_json(raw or "")
 
     if isinstance(parsed, dict):
@@ -385,6 +406,7 @@ def strategic_replan(
     cm: ClaimsModel,
     llm: LLMFn,
     available_urls: Optional[list[dict]] = None,
+    clarifications: str = "",
 ) -> dict:
     """One LLM call returning a diagnosis + plan revisions + next action.
 
@@ -392,7 +414,14 @@ def strategic_replan(
     caller still gets a usable fallback `next_action` (typically a search
     on the highest-priority open claim's text) plus an explanatory diagnosis.
     """
-    raw = llm(_STRATEGIST_SYSTEM, _strategist_user_prompt(cm, available_urls))
+    user = _strategist_user_prompt(cm, available_urls)
+    if clarifications and clarifications.strip():
+        user = (
+            f"USER CLARIFICATIONS (apply throughout your re-plan):\n"
+            f"{clarifications.strip()}\n\n"
+            + user
+        )
+    raw = llm(_STRATEGIST_SYSTEM, user)
     parsed = _parse_json(raw or "")
 
     out: dict = {

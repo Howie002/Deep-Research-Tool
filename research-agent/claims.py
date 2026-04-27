@@ -275,13 +275,18 @@ def preset_budget(depth: str) -> Budget:
     Budgets emphasise hard caps on *resources* (fetches / wallclock), not
     on process (stage iterations). The loop runs as long as productive
     moves are available within budget.
+
+    These were bumped 2026-04-27 after Andrew Howerton runs were
+    consistently exhausting fetch budget at depth=medium with thin profile
+    subjects. The new mediums (~50% larger) leave room for the strategist
+    to investigate newly-raised sub-claims after the initial pass closes.
     """
     depth = (depth or "medium").lower()
     if depth == "light":
-        return Budget(max_fetches=5,  max_searches=5,  max_llm_calls=40,  max_wallclock_seconds=300,  max_loop_iterations=15)
+        return Budget(max_fetches=8,  max_searches=8,  max_llm_calls=60,  max_wallclock_seconds=600,  max_loop_iterations=25)
     if depth == "heavy":
-        return Budget(max_fetches=20, max_searches=20, max_llm_calls=160, max_wallclock_seconds=1800, max_loop_iterations=60)
+        return Budget(max_fetches=30, max_searches=30, max_llm_calls=240, max_wallclock_seconds=2700, max_loop_iterations=90)
     if depth == "ultra":
-        return Budget(max_fetches=40, max_searches=40, max_llm_calls=320, max_wallclock_seconds=3600, max_loop_iterations=120)
+        return Budget(max_fetches=60, max_searches=60, max_llm_calls=480, max_wallclock_seconds=5400, max_loop_iterations=180)
     # Default = medium
-    return Budget(max_fetches=10, max_searches=10, max_llm_calls=80, max_wallclock_seconds=900, max_loop_iterations=40)
+    return Budget(max_fetches=15, max_searches=15, max_llm_calls=120, max_wallclock_seconds=1500, max_loop_iterations=60)
