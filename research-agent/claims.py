@@ -281,12 +281,17 @@ def preset_budget(depth: str) -> Budget:
     subjects. The new mediums (~50% larger) leave room for the strategist
     to investigate newly-raised sub-claims after the initial pass closes.
     """
+    # Searches are capped BELOW fetches: one search surfaces many fetchable URLs,
+    # so a balanced run should fetch far more than it searches. Equal caps let runs
+    # exhaust the search budget while starving fetches (observed 30 searches / 7
+    # fetches at heavy). search ≈ fetch/2 forces the loop to spend its budget on
+    # evidence-gathering, not query churn.
     depth = (depth or "medium").lower()
     if depth == "light":
-        return Budget(max_fetches=8,  max_searches=8,  max_llm_calls=60,  max_wallclock_seconds=600,  max_loop_iterations=25)
+        return Budget(max_fetches=10, max_searches=5,  max_llm_calls=60,  max_wallclock_seconds=600,  max_loop_iterations=25)
     if depth == "heavy":
-        return Budget(max_fetches=30, max_searches=30, max_llm_calls=240, max_wallclock_seconds=2700, max_loop_iterations=90)
+        return Budget(max_fetches=32, max_searches=15, max_llm_calls=240, max_wallclock_seconds=2700, max_loop_iterations=90)
     if depth == "ultra":
-        return Budget(max_fetches=60, max_searches=60, max_llm_calls=480, max_wallclock_seconds=5400, max_loop_iterations=180)
+        return Budget(max_fetches=60, max_searches=28, max_llm_calls=480, max_wallclock_seconds=5400, max_loop_iterations=180)
     # Default = medium
-    return Budget(max_fetches=15, max_searches=15, max_llm_calls=120, max_wallclock_seconds=1500, max_loop_iterations=60)
+    return Budget(max_fetches=18, max_searches=9,  max_llm_calls=120, max_wallclock_seconds=1500, max_loop_iterations=60)

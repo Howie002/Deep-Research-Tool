@@ -397,6 +397,42 @@ def synthesize_prose(cm: ClaimsModel, llm) -> tuple[str, list[str]]:
 # ── Deterministic synthesizer ────────────────────────────────────────────────
 
 
+def _norm_url_key(u: str) -> str:
+    """Loose URL key for dedup: lowercase host/scheme, drop www, fragment,
+    tracking params and trailing slash. Mirrors the loop's `_norm_url` but is
+    module-level so the renderer can reuse it."""
+    try:
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+        s = urlsplit(u.strip())
+        scheme = (s.scheme or "https").lower()
+        host = s.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        host = host.split(":")[0] if host.endswith((":80", ":443")) else host
+        path = s.path.rstrip("/")
+        q = [(k, v) for k, v in parse_qsl(s.query)
+             if not k.lower().startswith(("utm_", "fbclid", "gclid"))]
+        return urlunsplit((scheme, host, path, urlencode(q), ""))
+    except Exception:
+        return u.strip().lower().rstrip("/")
+
+
+def _dedup_evidence(evs: list[Evidence]) -> list[Evidence]:
+    """Drop duplicate quotes within one claim block. Two pieces of evidence are
+    the same if their normalized URL AND normalized quote match. Keeps order
+    (first occurrence wins)."""
+    seen: set[tuple[str, str]] = set()
+    out: list[Evidence] = []
+    for ev in evs:
+        qkey = re.sub(r"\s+", " ", (ev.quote or "")).strip().lower()
+        key = (_norm_url_key(ev.url), qkey)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ev)
+    return out
+
+
 def _summary_line(cm: ClaimsModel) -> str:
     supported = [c for c in cm.claims.values() if c.status == ClaimStatus.SUPPORTED]
     if not supported:
@@ -453,16 +489,18 @@ def synthesize_report(cm: ClaimsModel) -> str:
     lines.append("")
 
     def _claim_block(c: Claim) -> list[str]:
+        sup = _dedup_evidence(c.support)
+        con = _dedup_evidence(c.contradictions)
         out = [f"### {c.text}",
                f"*Confidence: {c.confidence:.2f}  |  Evidence: "
-               f"{len(c.support)} supporting, {len(c.contradictions)} contradicting*",
+               f"{len(sup)} supporting, {len(con)} contradicting*",
                ""]
-        for ev in c.support:
+        for ev in sup:
             out.append(f"> \"{ev.quote}\"")
             out.append(f">")
             out.append(f"> — {ev.url}")
             out.append("")
-        for ev in c.contradictions:
+        for ev in con:
             out.append(f"> ⚠ Contradicted by: \"{ev.quote}\"")
             out.append(f"> — {ev.url}")
             out.append("")
@@ -593,7 +631,28 @@ def run_adaptive(
     # {"url", "title", "snippet"}; de-duped by URL. The planner sees
     # this list so it can propose fetches naturally.
     surfaced_urls: list[dict] = []
-    _seen_surfaced: set[str] = set()
+    _seen_surfaced: set[str] = set()        # normalized-URL dedup keys (surfaced queue)
+    _fetched_norm: set[str] = set()         # normalized-URL dedup keys (already fetched)
+
+    def _norm_url(u: str) -> str:
+        """Normalize a URL for dedup — lowercase scheme/host, drop www / default port /
+        fragment / tracking params, strip trailing slash. Collapses near-duplicate
+        surfaced URLs (e.g. trailing-slash variants) so they don't waste fetch budget."""
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+        try:
+            s = urlsplit((u or "").strip())
+            scheme = (s.scheme or "http").lower()
+            host = (s.hostname or "").lower()
+            if host.startswith("www."):
+                host = host[4:]
+            netloc = host
+            if s.port and not ((scheme == "http" and s.port == 80) or (scheme == "https" and s.port == 443)):
+                netloc = f"{host}:{s.port}"
+            keep = [(k, v) for k, v in parse_qsl(s.query)
+                    if not k.lower().startswith(("utm_", "fbclid", "gclid", "mc_", "ref"))]
+            return urlunsplit((scheme, netloc, s.path.rstrip("/"), urlencode(sorted(keep)), ""))
+        except Exception:
+            return (u or "").strip().rstrip("/").lower()
 
     while True:
         # ── Hard stops only — stagnation no longer ends the run ─────────
@@ -612,7 +671,7 @@ def run_adaptive(
         cm.budget.loops_used += 1
         # Drop already-fetched URLs from the surfaced queue so the
         # planner isn't tempted to refetch.
-        surfaced_urls = [s for s in surfaced_urls if s["url"] not in cm.fetched_urls]
+        surfaced_urls = [s for s in surfaced_urls if _norm_url(s["url"]) not in _fetched_norm]
 
         # ── Decide: tactical turn or strategist turn? ───────────────────
         # Strategist runs on stagnation OR periodically OR when we've
@@ -676,18 +735,22 @@ def run_adaptive(
             loops_since_last_strategist += 1
             action = next_action(cm, llm, available_urls=surfaced_urls,
                                  clarifications=clarifications)
-            # Circuit-breaker: if the planner has proposed three searches in
-            # a row and there are surfaced URLs waiting to be fetched, force
-            # a fetch of the most promising available URL.
+            # Circuit-breaker: searches only PRODUCE URLs — fetches produce the
+            # evidence that resolves claims. As soon as the planner proposes a
+            # SECOND consecutive search while URLs are already waiting, force a
+            # fetch of the most promising one. Tuned down from 3→2 consecutive
+            # searches because runs were ~4:1 search:fetch (30 searches / 7
+            # fetches) and starving claim resolution — fetch what you found
+            # before searching for more.
             if (
                 action["type"] == "search"
-                and consecutive_searches >= 2
+                and consecutive_searches >= 1
                 and surfaced_urls
             ):
                 forced = surfaced_urls[0]
                 _log(
-                    f"Circuit-breaker: 3 searches without a fetch → forcing fetch of "
-                    f"{forced['url']}",
+                    f"Circuit-breaker: search proposed with URLs already queued → "
+                    f"forcing fetch of {forced['url']}",
                     agent="Planner",
                 )
                 action = {
@@ -722,9 +785,10 @@ def run_adaptive(
             harvested = _harvest_search_urls(result)
             new_count = 0
             for item in harvested:
-                if item["url"] in _seen_surfaced or item["url"] in cm.fetched_urls:
+                nu = _norm_url(item["url"])
+                if nu in _seen_surfaced or nu in _fetched_norm:
                     continue
-                _seen_surfaced.add(item["url"])
+                _seen_surfaced.add(nu)
                 surfaced_urls.append(item)
                 new_count += 1
             if new_count:
@@ -734,7 +798,7 @@ def run_adaptive(
             evidence_cat = ""
         elif action["type"] == "fetch":
             url = action["url"]
-            if url in cm.fetched_urls:
+            if _norm_url(url) in _fetched_norm:
                 _log(f"(skip duplicate fetch: {url})", agent="Researcher")
                 consecutive_unproductive += 1
                 cm.log_action(action, "(duplicate fetch skipped)")
@@ -749,6 +813,7 @@ def run_adaptive(
                 continue
             cm.budget.fetches_used += 1
             cm.fetched_urls.add(url)
+            _fetched_norm.add(_norm_url(url))
             consecutive_searches = 0   # reset circuit-breaker on a fetch
             evidence_kind = "fetch"
             evidence_url = url

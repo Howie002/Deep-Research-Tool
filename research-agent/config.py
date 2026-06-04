@@ -16,6 +16,8 @@ SEARCH_BACKEND: str = os.getenv("SEARCH_BACKEND", "duckduckgo").lower()
 LANGSEARCH_API_KEY: str = os.getenv("LANGSEARCH_API_KEY", "")
 BRAVE_API_KEY: str | None = os.getenv("BRAVE_API_KEY") or None
 SERPAPI_KEY: str | None = os.getenv("SERPAPI_KEY") or None
+# Self-hosted SearXNG metasearch (privacy-respecting, local, no API key).
+SEARXNG_URL: str = os.getenv("SEARXNG_URL", "http://localhost:8888")
 
 # ── REST API ───────────────────────────────────────────────────────────────
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")

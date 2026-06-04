@@ -32,6 +32,7 @@ from config import (
     MAX_SEARCH_RESULTS,
     SEARCH_BACKEND,
     SEARCH_CACHE_TTL_SECONDS,
+    SEARXNG_URL,
     SERPAPI_KEY,
     THOROUGH_MODE,
 )
@@ -293,6 +294,14 @@ _budget = _ContextBudget()
 # Serialise LangSearch requests — the free tier rejects concurrent calls (429)
 _langsearch_lock = threading.Lock()
 
+# SearXNG scrapes upstream engines (Google/DDG/Brave/Startpage) that CAPTCHA / suspend
+# the scraper under bursty load — a deep run firing 10-40 searches quickly knocks most
+# engines offline, collapsing results to a single engine. A global min-interval throttle
+# keeps the request rate low enough that the engines stay responsive across a whole run.
+_searxng_lock = threading.Lock()
+_searxng_next_ok = [0.0]          # earliest epoch time the next SearXNG request may go out
+_SEARXNG_MIN_INTERVAL = 2.5       # seconds enforced between SearXNG requests
+
 
 # ── Search backend abstraction ─────────────────────────────────────────────
 
@@ -409,8 +418,90 @@ class LangSearchBackend(SearchBackend):
         ]
 
 
+class SearXNGBackend(SearchBackend):
+    """Self-hosted SearXNG metasearch — privacy-respecting, fully local, no API key.
+
+    Throttled + retried: a global min-interval throttle (see _SEARXNG_MIN_INTERVAL)
+    spaces requests so SearXNG's upstream engines don't rate-limit/CAPTCHA the scraper
+    during a deep run. On a degraded/empty response we back off and retry, giving any
+    transiently-suspended engines a chance to recover.
+    """
+
+    def __init__(self, base_url: str) -> None:
+        self._base_url = base_url.rstrip("/")
+
+    def _throttle(self) -> None:
+        with _searxng_lock:
+            now = time.time()
+            wait = max(0.0, _searxng_next_ok[0] - now)
+            _searxng_next_ok[0] = now + wait + _SEARXNG_MIN_INTERVAL
+        if wait > 0:
+            time.sleep(wait)
+
+    def search(self, query: str, max_results: int) -> list[dict]:
+        last_err = "unknown"
+        for attempt in range(3):
+            self._throttle()
+            try:
+                response = requests.get(
+                    f"{self._base_url}/search",
+                    params={"q": query, "format": "json", "categories": "general"},
+                    headers={"Accept": "application/json"},
+                    timeout=20,
+                )
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])
+                if results:
+                    unresponsive = data.get("unresponsive_engines") or []
+                    if unresponsive:
+                        log(f"SearXNG: {len(unresponsive)} engine(s) unresponsive this query")
+                    return [
+                        {
+                            "title": r.get("title", ""),
+                            "url": r.get("url", ""),
+                            "snippet": r.get("content", ""),
+                        }
+                        for r in results[:max_results]
+                    ]
+                last_err = "0 results (engines likely suspended)"
+            except Exception as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+            time.sleep(2 ** attempt)  # backoff 1s, 2s, 4s — let suspended engines recover
+        log(f"WARNING: SearXNG search failed after 3 attempts ({last_err})")
+        return []
+
+
+# Domains we never fetch or cite — AI-generated wiki mirrors and content farms
+# that present as reference sources but aren't editorially accountable.
+# Matched on the registered domain (suffix), so subdomains are covered too.
+LOW_CREDIBILITY_DOMAINS: frozenset[str] = frozenset({
+    "grokipedia.com",      # AI-generated Wikipedia mirror
+    "ask.com",
+    "answers.com",
+})
+
+
+def _is_low_credibility(url: str) -> bool:
+    """True if `url`'s host is on the low-credibility denylist (suffix match,
+    so `www.` and other subdomains are covered)."""
+    try:
+        from urllib.parse import urlsplit
+        host = urlsplit(url.strip()).netloc.lower().split(":")[0]
+    except Exception:
+        return False
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in LOW_CREDIBILITY_DOMAINS)
+
+
 def _get_backend() -> SearchBackend:
     """Return the configured search backend, falling back to DuckDuckGo if the required key is missing."""
+    if SEARCH_BACKEND == "searxng":
+        if SEARXNG_URL:
+            return SearXNGBackend(SEARXNG_URL)
+        log("WARNING: SEARXNG_URL not set — falling back to DuckDuckGo")
+        return DuckDuckGoBackend()
     if SEARCH_BACKEND == "brave":
         if BRAVE_API_KEY:
             return BraveBackend(BRAVE_API_KEY)
@@ -740,6 +831,15 @@ class WebSearchTool(BaseTool):
             if not results:
                 log(f"No results found for: \"{query}\"")
                 return f"No results found for: {query}"
+
+            # Source-credibility filter: drop known low-credibility domains
+            # (AI-generated wiki mirrors, content farms) before they can be
+            # fetched or cited. Keeps the report's sources defensible.
+            before = len(results)
+            results = [r for r in results if not _is_low_credibility(r.get("url", ""))]
+            dropped = before - len(results)
+            if dropped:
+                log(f"Dropped {dropped} low-credibility source(s) for: \"{query}\"")
 
             already_fetched = _fetched.filter([r["url"] for r in results])
             results = [r for r in results if r["url"] not in already_fetched]

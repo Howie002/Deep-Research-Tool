@@ -1,9 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- When served behind the /deep-research path prefix (NPM panel), anchor all
+       relative URLs to it so assets/API resolve correctly with OR without a
+       trailing slash. Direct :8765 access (no prefix) is unaffected. -->
+  <script>if(location.pathname.indexOf('/deep-research')===0)document.write('<base href="/deep-research/">');</script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Research Agent</title>
+  <title>Deep Research · Texas A&M Foundation</title>
+  <link rel="icon" type="image/png" href="static/tamu-foundation-logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -12,22 +17,30 @@
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <style>
     :root {
-      --bg:        #0b0b14;
-      --surface:   #111120;
-      --surface-2: #17172a;
-      --surface-3: #1e1e33;
-      --border:    #242438;
-      --border-2:  #2e2e4a;
-      --text:      #e4e4f0;
-      --muted:     #6a6a90;
-      --subtle:    #3a3a58;
-      --accent:    #6366f1;
-      --accent-2:  #8b5cf6;
-      --accent-glow: rgba(99,102,241,.18);
-      --researcher:#3b82f6;
-      --analyst:   #f97316;
-      --synth:     #10b981;
-      --sys:       #8b5cf6;
+      /* ── Texas A&M Foundation brand (light theme) ── */
+      --bg:        #F6F6F6;   /* page background */
+      --surface:   #FFFFFF;   /* cards, panels */
+      --surface-2: #FAFAF8;   /* inputs, elevated */
+      --surface-3: #EDEDED;   /* hover / sunken */
+      --border:    #D6D3C4;   /* warm taupe border */
+      --border-2:  #C9C5B4;   /* stronger border */
+      --text:      #1A1A1A;   /* primary text */
+      --muted:     #707070;   /* secondary text */
+      --subtle:    #A8A496;   /* tertiary / placeholder */
+      /* maroon is the primary brand chrome */
+      --accent:      #500000; /* Aggie maroon */
+      --accent-2:    #732f2f; /* maroon light */
+      --maroon-dark: #3c001c;
+      --accent-glow: rgba(80,0,0,.16);
+      /* Foundation gold + light blue secondary accents */
+      --gold:      #C6A84B;
+      --blue:      #2F6FB0;   /* Foundation light-blue accent */
+      --blue-soft: #3B82F6;
+      /* agent/role semantics, darkened for legibility on a light surface */
+      --researcher:#2563eb;
+      --analyst:   #c2410c;
+      --synth:     #15803d;
+      --sys:       #6d28d9;
     }
 
     * { box-sizing: border-box; }
@@ -277,22 +290,140 @@
     /* ── Scrollable panels ── */
     .panel-scroll { min-height: 280px; max-height: 420px; overflow-y: auto; }
     .stream-scroll { max-height: 580px; overflow-y: auto; }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       TEXAS A&M FOUNDATION LIGHT THEME OVERRIDES
+       Appended last so these win by source order. The base sheet above was
+       authored dark-first; this layer re-grounds it on the Foundation palette
+       (maroon chrome, gold + light-blue accents) for a light surface.
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /* Prose — dark text on white */
+    .prose { color: #2a2a2a; }
+    .prose h1, .prose h2, .prose h3 { color: var(--text); }
+    .prose h2 { border-bottom-color: var(--border); }
+    .prose a  { color: var(--accent); }
+    .prose a:hover { color: var(--accent-2); }
+    .prose strong { color: #111; }
+    .prose code { background: #f3eeee; color: var(--accent); }
+    .prose blockquote { border-left-color: var(--gold); color:#555; }
+    .prose hr { border-top-color: var(--border); }
+
+    /* Citations → Foundation blue */
+    sup.cite-ref { color: var(--blue); }
+    sup.cite-ref:hover { color: var(--accent); }
+    .cite-tooltip { background:#fff; border-color:var(--border); color:var(--text);
+                    box-shadow:0 8px 30px rgba(0,0,0,.18); }
+    .cite-tooltip-n { color: var(--blue); }
+    .cite-tooltip a { color: var(--accent); }
+    .cite-tooltip-cat, .cite-ref-cat { background: rgba(47,111,176,.14); color: var(--blue); }
+
+    /* Brand mark + gradients → maroon→gold sweep */
+    .brand-gradient { background: linear-gradient(135deg, var(--accent) 0%, var(--maroon-dark) 100%); }
+    .text-gradient  { background: linear-gradient(135deg, var(--accent) 0%, var(--gold) 100%);
+                      -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+
+    /* Primary button → solid maroon */
+    .btn-primary { background: var(--accent); }
+    .btn-primary:hover:not(:disabled) { background: var(--maroon-dark); opacity:1; }
+    .btn-ghost { color: var(--muted); border-color: var(--border) !important; }
+    .btn-ghost:hover { background: var(--surface-3); color: var(--text); }
+    .btn-danger { background: rgba(239,68,68,.08); color:#b91c1c; border-color: rgba(239,68,68,.35); }
+    .btn-danger:hover { background: rgba(239,68,68,.16); }
+
+    /* Inputs → white w/ maroon focus ring */
+    .field { background:#fff; border-color: var(--border); color: var(--text); }
+    .field:focus { border-color: rgba(80,0,0,.55); box-shadow: 0 0 0 3px rgba(80,0,0,.12); }
+    .field::placeholder { color: var(--subtle); }
+
+    /* Agent chips — darker text on light tint */
+    .chip-researcher { background:rgba(37,99,235,.12);  color:#1d4ed8; border-color:rgba(37,99,235,.3); }
+    .chip-analyst    { background:rgba(194,65,12,.12);   color:#c2410c; border-color:rgba(194,65,12,.3); }
+    .chip-synth      { background:rgba(21,128,61,.12);   color:#15803d; border-color:rgba(21,128,61,.3); }
+    .chip-system     { background:rgba(80,0,0,.10);      color:var(--accent); border-color:rgba(80,0,0,.25); }
+
+    /* Source badges — found/info → blue; academic/system → maroon; gov/news/social darkened */
+    .badge-found     { background:rgba(47,111,176,.14); color:var(--blue); }
+    .badge-confirmed { background:rgba(21,128,61,.14);  color:#15803d; }
+    .badge-academic  { background:rgba(80,0,0,.10);     color:var(--accent); }
+    .badge-gov       { background:rgba(21,128,61,.12);  color:#15803d; }
+    .badge-news      { background:rgba(198,168,75,.20); color:#8a6d1b; }
+    .badge-social    { background:rgba(239,68,68,.10);  color:#b91c1c; }
+
+    /* Stage pipeline */
+    .stage-done    { background:rgba(21,128,61,.10); border-color:rgba(21,128,61,.4); color:#15803d; }
+    .stage-active  { background:rgba(80,0,0,.08);    border-color:rgba(80,0,0,.5);  color:var(--accent);
+                     box-shadow:0 0 12px rgba(80,0,0,.12); }
+    .stage-pending { background:#fff; border-color:var(--border); color:var(--subtle); }
+
+    /* Severity rails */
+    .sev-critical { border-left-color:rgba(239,68,68,.8);  background:rgba(239,68,68,.06); }
+    .sev-warning  { border-left-color:rgba(198,168,75,.9); background:rgba(198,168,75,.10); }
+    .sev-info     { border-left-color:rgba(47,111,176,.7); background:rgba(47,111,176,.06); }
+    .sev-good     { border-left-color:rgba(21,128,61,.7);  background:rgba(21,128,61,.06); }
+
+    /* Grade badges */
+    .grade-A { background:rgba(21,128,61,.16); color:#15803d; }
+    .grade-B { background:rgba(47,111,176,.16); color:var(--blue); }
+    .grade-C { background:rgba(198,168,75,.20); color:#8a6d1b; }
+    .grade-D { background:rgba(194,65,12,.16);  color:#c2410c; }
+    .grade-F { background:rgba(239,68,68,.14);  color:#b91c1c; }
+
+    /* Stream event accents */
+    .ev-search  { border-left-color:rgba(80,0,0,.55); }
+    .ev-fetch   { border-left-color:rgba(47,111,176,.7); }
+    .ev-content { border-left-color:rgba(47,111,176,.4); background:rgba(47,111,176,.04); }
+    .ev-step    { border-left-color:rgba(0,0,0,.10); }
+    .ev-plan    { border-left-color:rgba(198,168,75,.8); }
+    .ev-note    { border-left-color:rgba(21,128,61,.6); }
+    .ev-draft   { border-left-color:rgba(80,0,0,.5); }
+    .ev-done    { border-left-color:rgba(21,128,61,.8); background:rgba(21,128,61,.06); }
+    .ev-error   { border-left-color:rgba(239,68,68,.7); background:rgba(239,68,68,.06); }
+
+    /* Tabs */
+    .tab-btn.active { color: var(--accent); }
+    .tab-btn.active::after { background: var(--accent); }
+    .art-tab-btn.active { color: var(--accent); background: var(--surface-3); }
+
+    /* Status pills */
+    .status-online  { background:rgba(21,128,61,.14); color:#15803d; }
+    .status-offline { background:rgba(239,68,68,.12); color:#b91c1c; }
+    .status-checking{ background:var(--surface-3); color:var(--muted); }
+
+    /* Report list items */
+    .report-item { background:#fff; border-color:var(--border); }
+    .report-item:hover { border-color:var(--border-2); background:var(--surface-2); }
+    .report-item.active { border-color:rgba(80,0,0,.5); background:rgba(80,0,0,.05); }
+
+    /* Cards get a soft elevation on the light surface */
+    .card, .card-elevated { box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+
+    /* Skeleton shimmer on light */
+    .skeleton-line { background: linear-gradient(90deg, var(--surface-3) 25%, #f3f3f0 50%, var(--surface-3) 75%);
+                     background-size:200% 100%; }
+    .nb-orphan { background:rgba(21,128,61,.05); border-color:rgba(21,128,61,.2); }
+
+    /* Foundation top bar */
+    .fdn-header { background: var(--accent); border-bottom: 3px solid var(--gold); }
+    .fdn-header h1 { color:#fff; }
+    .fdn-header p  { color: rgba(255,255,255,.72); }
+    .fdn-logo { background:#fff; border-radius:8px; padding:3px; }
   </style>
 </head>
 
 <body class="min-h-screen flex flex-col" style="background:var(--bg)">
 
 <!-- ══════════════════════════════ HEADER ════════════════════════════════════ -->
-<header class="sticky top-0 z-20 border-b" style="background:rgba(11,11,20,.92);backdrop-filter:blur(16px);border-color:var(--border)">
-  <div class="max-w-screen-2xl mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
+<header class="fdn-header sticky top-0 z-20">
+  <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
 
     <!-- Logo / Home button -->
-    <button id="home-btn" type="button" class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+    <button id="home-btn" type="button" class="flex items-center gap-3 cursor-pointer hover:opacity-90 transition-opacity"
             style="background:transparent;border:none;padding:0" title="Return to dashboard">
-      <div class="w-8 h-8 rounded-lg brand-gradient flex items-center justify-center text-white text-sm font-bold shadow-lg" style="box-shadow:0 0 16px rgba(99,102,241,.4)">R</div>
+      <img src="static/tamu-foundation-logo.png" alt="Texas A&M Foundation" class="fdn-logo w-9 h-9 object-contain shrink-0" />
       <div class="text-left">
-        <h1 class="text-sm font-semibold leading-none" style="color:var(--text)">Research Agent</h1>
-        <p class="text-xs mt-0.5" style="color:var(--muted)">CrewAI · LM Studio · Live Workspace</p>
+        <h1 class="text-sm font-bold leading-none">Deep Research</h1>
+        <p class="text-xs mt-0.5">Texas A&amp;M Foundation · Live Research Workspace</p>
       </div>
     </button>
 
@@ -332,7 +463,7 @@
 </div>
 
 <!-- ══════════════════════════ STAGE PIPELINE ════════════════════════════════ -->
-<div id="pipeline-bar" class="hidden border-b px-6 py-3" style="background:rgba(17,17,32,.6);border-color:var(--border)">
+<div id="pipeline-bar" class="hidden border-b px-6 py-3" style="background:var(--surface);border-color:var(--border)">
   <div class="max-w-screen-2xl mx-auto flex items-center gap-2">
     <div id="stage-1" class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium stage-pending">
       <span class="stage-icon">○</span><span>Research</span>
@@ -516,7 +647,7 @@
 
 <!-- ════════════════════════════ SETTINGS MODAL ══════════════════════════════ -->
 <div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.7);backdrop-filter:blur(8px)">
-  <div class="card-elevated w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl" style="box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+  <div class="card-elevated w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl" style="box-shadow:0 20px 50px rgba(0,0,0,.18),0 0 0 1px rgba(80,0,0,.06)">
 
     <!-- Header -->
     <div class="flex items-center justify-between px-6 py-5 border-b" style="border-color:var(--border)">
@@ -619,7 +750,7 @@
               <label class="text-xs font-medium" style="color:var(--muted)">Search results per query</label>
               <span id="sl-search-val" class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface-3);color:#a5b4fc">5</span>
             </div>
-            <input id="sl-search" type="range" min="1" max="30" step="1" value="5" class="w-full accent-indigo-500" style="cursor:pointer" oninput="$('sl-search-val').textContent=this.value" />
+            <input id="sl-search" type="range" min="1" max="30" step="1" value="5" class="w-full accent-[#500000]" style="cursor:pointer" oninput="$('sl-search-val').textContent=this.value" />
             <p class="text-xs mt-1" style="color:var(--subtle)">More results = broader coverage, slower runs.</p>
           </div>
           <div>
@@ -627,7 +758,7 @@
               <label class="text-xs font-medium" style="color:var(--muted)">Max page content length</label>
               <span id="sl-page-val" class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface-3);color:#a5b4fc">4 K</span>
             </div>
-            <input id="sl-page" type="range" min="500" max="50000" step="500" value="4000" class="w-full accent-indigo-500" style="cursor:pointer"
+            <input id="sl-page" type="range" min="500" max="50000" step="500" value="4000" class="w-full accent-[#500000]" style="cursor:pointer"
               oninput="$('sl-page-val').textContent=(this.value>=1000?(this.value/1000).toFixed(1)+' K':this.value+' chars')" />
             <p class="text-xs mt-1" style="color:var(--subtle)">Chars read from each fetched page. Higher = deeper reads, more tokens.</p>
           </div>
@@ -636,7 +767,7 @@
               <label class="text-xs font-medium" style="color:var(--muted)">Model context limit</label>
               <span id="sl-ctx-val" class="text-xs font-mono px-2 py-0.5 rounded" style="background:var(--surface-3);color:#a5b4fc">256 K</span>
             </div>
-            <input id="sl-ctx" type="range" min="16000" max="1000000" step="8000" value="256000" class="w-full accent-indigo-500" style="cursor:pointer"
+            <input id="sl-ctx" type="range" min="16000" max="1000000" step="8000" value="256000" class="w-full accent-[#500000]" style="cursor:pointer"
               oninput="$('sl-ctx-val').textContent=Math.round(this.value/1000)+' K'" />
             <p class="text-xs mt-1" style="color:var(--subtle)">Set to your model's actual context window. Controls when the agent gets budget warnings.</p>
           </div>
@@ -692,7 +823,7 @@
 
 <!-- ════════════════════════ CONTINUE RESEARCH MODAL ════════════════════════ -->
 <div id="continue-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.75);backdrop-filter:blur(8px)">
-  <div class="card-elevated w-full max-w-2xl flex flex-col shadow-2xl" style="max-height:88vh;box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+  <div class="card-elevated w-full max-w-2xl flex flex-col shadow-2xl" style="max-height:88vh;box-shadow:0 20px 50px rgba(0,0,0,.18),0 0 0 1px rgba(80,0,0,.06)">
     <!-- Header -->
     <div class="flex items-start justify-between px-6 py-5 border-b shrink-0" style="border-color:var(--border)">
       <div>
@@ -737,7 +868,7 @@
 
 <!-- ══════════════════════════════ EXPORT MODAL ══════════════════════════════ -->
 <div id="export-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.75);backdrop-filter:blur(8px)">
-  <div class="card-elevated w-full max-w-sm flex flex-col shadow-2xl" style="box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+  <div class="card-elevated w-full max-w-sm flex flex-col shadow-2xl" style="box-shadow:0 20px 50px rgba(0,0,0,.18),0 0 0 1px rgba(80,0,0,.06)">
     <div class="flex items-center justify-between px-5 py-4 border-b" style="border-color:var(--border)">
       <div>
         <div class="font-semibold text-sm" style="color:var(--text)">Export PDF</div>
@@ -755,32 +886,32 @@
     <!-- Section checkboxes -->
     <div class="px-5 py-4 space-y-2">
       <label class="flex items-center gap-3 text-sm py-1 opacity-50 cursor-not-allowed">
-        <input type="checkbox" checked disabled class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" checked disabled class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Research Report</span>
         <span class="ml-auto text-xs" style="color:var(--muted)">always</span>
       </label>
       <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
-        <input type="checkbox" id="exp-plan"    class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" id="exp-plan"    class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Research Plan</span>
       </label>
       <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
-        <input type="checkbox" id="exp-notes"   class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" id="exp-notes"   class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Research Notes</span>
       </label>
       <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
-        <input type="checkbox" id="exp-sources" class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" id="exp-sources" class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Sources</span>
       </label>
       <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
-        <input type="checkbox" id="exp-stats"   class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" id="exp-stats"   class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Run Statistics</span>
       </label>
       <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
-        <input type="checkbox" id="exp-tree"    class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" id="exp-tree"    class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Branch Map</span>
       </label>
       <label class="flex items-center gap-3 text-sm py-1 cursor-pointer hover:opacity-90">
-        <input type="checkbox" id="exp-mindmap" class="accent-indigo-500 w-4 h-4">
+        <input type="checkbox" id="exp-mindmap" class="accent-[#500000] w-4 h-4">
         <span style="color:var(--text)">Mind Map</span>
       </label>
     </div>
@@ -798,7 +929,7 @@
 
 <!-- ══════════════════════════════ CLARIFY MODAL ═════════════════════════════ -->
 <div id="clarify-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,.75);backdrop-filter:blur(8px)">
-  <div class="card-elevated w-full max-w-xl flex flex-col shadow-2xl" style="box-shadow:0 0 60px rgba(99,102,241,.15),0 40px 60px rgba(0,0,0,.6)">
+  <div class="card-elevated w-full max-w-xl flex flex-col shadow-2xl" style="box-shadow:0 20px 50px rgba(0,0,0,.18),0 0 0 1px rgba(80,0,0,.06)">
     <div class="flex items-start justify-between px-6 py-5 border-b" style="border-color:var(--border)">
       <div>
         <h2 class="font-semibold" style="color:var(--text)">Before we start</h2>
@@ -839,11 +970,11 @@
       <!-- Thorough + don't-learn -->
       <div class="flex flex-col gap-2">
         <label class="flex items-center gap-2 cursor-pointer select-none" id="thorough-wrap">
-          <input type="checkbox" id="clarify-thorough" class="accent-purple-500 w-3.5 h-3.5">
+          <input type="checkbox" id="clarify-thorough" class="accent-[#500000] w-3.5 h-3.5">
           <span class="text-xs" style="color:var(--subtle)">Thorough read — judge every resource for usefulness <span id="thorough-auto" class="hidden" style="color:#a5b4fc">(auto-on at Ultra)</span></span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input type="checkbox" id="clarify-no-learn" class="accent-purple-500 w-3.5 h-3.5">
+          <input type="checkbox" id="clarify-no-learn" class="accent-[#500000] w-3.5 h-3.5">
           <span class="text-xs" style="color:var(--subtle)">Don't learn from this run</span>
         </label>
       </div>
@@ -904,7 +1035,7 @@ function agentCfg(name) {
 // ── Health check ────────────────────────────────────────────────────────────
 async function checkHealth() {
   try {
-    const r = await fetch('/health');
+    const r = await fetch('health');
     if (r.ok) {
       $('server-status').textContent = '● Online';
       $('server-status').className = 'text-xs px-2.5 py-1 rounded-full status-online';
@@ -1296,7 +1427,7 @@ function renderNotebook() {
     const rel      = relMatch ? relMatch[1].trim() : '';
     html += `<div class="rounded-lg p-3 mb-2 nb-orphan">
       <div class="text-xs font-semibold mb-1" style="color:#6ee7b7">📝 Field Note</div>
-      <p class="text-xs leading-relaxed" style="color:#c8c8e0">${esc(body.length>300?body.slice(0,300)+'…':body)}</p>
+      <p class="text-xs leading-relaxed" style="color:#2a2a2a">${esc(body.length>300?body.slice(0,300)+'…':body)}</p>
       ${rel ? `<p class="text-xs leading-relaxed mt-1.5 px-2 py-1 rounded" style="background:rgba(139,92,246,.1);border-left:2px solid #c084fc;color:#c4b5fd"><span style="font-weight:600;color:#c084fc">◈ Relevance: </span>${esc(rel.length>200?rel.slice(0,200)+'…':rel)}</p>` : ''}
     </div>`;
   }
@@ -1478,7 +1609,7 @@ function _liveMMScheduleRender() {
 // ── SSE streaming ───────────────────────────────────────────────────────────
 function startStreaming(jobId) {
   if (state.es) { state.es.close(); state.es = null; }
-  const es = new EventSource(`/api/jobs/${jobId}/stream`);
+  const es = new EventSource(`api/jobs/${jobId}/stream`);
   state.es = es;
   es.onmessage = function(e) {
     let ev;
@@ -1512,7 +1643,7 @@ async function openClarifyModal(query) {
   try {
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), 7000);
-    const res  = await fetch('/api/clarify', {
+    const res  = await fetch('api/clarify', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({query}),
@@ -1659,7 +1790,7 @@ async function startResearch(clarifications = '') {
   setFormEnabled(false);
   startElapsed();
   try {
-    const res = await fetch('/api/jobs', {
+    const res = await fetch('api/jobs', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({query, clarifications, no_learn, depth, thorough}),
     });
@@ -1680,7 +1811,7 @@ async function startResearch(clarifications = '') {
 // ── Cancel ──────────────────────────────────────────────────────────────────
 cancelBtn.addEventListener('click', async () => {
   if (!state.jobId) return;
-  try { await fetch(`/api/jobs/${state.jobId}/cancel`, {method:'POST'}); } catch {}
+  try { await fetch(`api/jobs/${state.jobId}/cancel`, {method:'POST'}); } catch {}
   if (state.es) { state.es.close(); state.es = null; }
   appendStreamRow('ev-error', '<span style="color:#fb923c">⚠ Job cancelled.</span>');
   setFormEnabled(true);
@@ -1774,7 +1905,7 @@ async function resumeJob(jobId) {
     errorBanner.innerHTML = `<div style="color:#fcd34d">⟳ Resuming run — reading checkpoint…</div>`;
 
     // POST to resume (strips old 'done' event from stream file on the backend)
-    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' });
+    const res = await fetch(`api/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
       throw new Error(err.detail || `HTTP ${res.status}`);
@@ -1783,7 +1914,7 @@ async function resumeJob(jobId) {
     // Fetch job metadata to get original query (for live mind-map centre node)
     let resumeQuery = '';
     try {
-      const jres = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+      const jres = await fetch(`api/jobs/${encodeURIComponent(jobId)}`);
       if (jres.ok) { const jd = await jres.json(); resumeQuery = jd.query || ''; }
     } catch {}
 
@@ -1890,7 +2021,7 @@ async function openContinueModal() {
   $('continue-modal').classList.remove('hidden');
 
   try {
-    const res = await fetch(`/api/reports/${encodeURIComponent(filename)}/gaps`);
+    const res = await fetch(`api/reports/${encodeURIComponent(filename)}/gaps`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
     $('continue-gaps-text').value = d.content
@@ -1915,7 +2046,7 @@ async function startGapFillResearch() {
 
   try {
     $('continue-modal').classList.add('hidden');
-    const res = await fetch('/api/jobs', {
+    const res = await fetch('api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1979,7 +2110,7 @@ $('export-modal-confirm').addEventListener('click', () => {
   const active = _EXP_KEYS.filter(k => prefs[k]);
   const sectionsParam = active.length ? active.join(',') : 'none';
   $('export-modal').classList.add('hidden');
-  window.location.href = `/api/reports/${encodeURIComponent(state.activeReportFile)}/export?format=pdf&sections=${sectionsParam}`;
+  window.location.href = `api/reports/${encodeURIComponent(state.activeReportFile)}/export?format=pdf&sections=${sectionsParam}`;
 });
 
 // ── Form state ──────────────────────────────────────────────────────────────
@@ -2027,7 +2158,7 @@ function renderDashboard(reports) {
   }
   grid.innerHTML = reports.slice(0, 12).map(r => {
     const tags = (r.tags || []).map(t => `<span class="text-xs px-1.5 py-0.5 rounded" style="background:rgba(99,102,241,.18);color:#a5b4fc">${esc(t)}</span>`).join(' ');
-    return `<button class="card p-4 text-left hover:border-indigo-500/50 transition-colors" onclick="viewReport('${esc(r.filename)}')" style="border:1px solid var(--border)">
+    return `<button class="card p-4 text-left hover:border-[#500000]/40 transition-colors" onclick="viewReport('${esc(r.filename)}')" style="border:1px solid var(--border)">
       <p class="text-sm font-medium leading-snug mb-2 line-clamp-2" style="color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden" title="${esc(r.query)}">${esc(r.query)}</p>
       <div class="flex items-center justify-between mt-auto">
         <span class="text-xs" style="color:var(--muted)">${esc(r.created)}</span>
@@ -2074,7 +2205,7 @@ if (_homeBtn) _homeBtn.addEventListener('click', returnToDashboard);
 // ── Reports sidebar ──────────────────────────────────────────────────────────
 async function loadReports() {
   try {
-    const res = await fetch('/api/reports');
+    const res = await fetch('api/reports');
     if (!res.ok) return;
     const body = await res.json();
     const reports = Array.isArray(body) ? body : (body.reports || []);
@@ -2129,7 +2260,7 @@ function renderReportsList(reports, listId) {
       const truncated = r.query.length > 80 ? r.query.slice(0,80) + '…' : r.query;
       if (!confirm(`Delete this run permanently?\n\n"${truncated}"\n\nThe report and all artifacts (claims, fetched pages, audit trail) will be removed.`)) return;
       try {
-        const res = await fetch(`/api/reports/${encodeURIComponent(r.filename)}`, { method: 'DELETE' });
+        const res = await fetch(`api/reports/${encodeURIComponent(r.filename)}`, { method: 'DELETE' });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           alert(`Delete failed: ${err.detail || `HTTP ${res.status}`}`);
@@ -2154,7 +2285,7 @@ function renderReportsList(reports, listId) {
 
 async function viewReport(filename) {
   try {
-    const res = await fetch(`/api/reports/${encodeURIComponent(filename)}`);
+    const res = await fetch(`api/reports/${encodeURIComponent(filename)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     state.activeReportFile = filename;
@@ -2180,7 +2311,7 @@ document.querySelectorAll('.art-tab-btn').forEach(btn => {
     activateArtTab(btn.dataset.art);
     if (btn.dataset.art === 'tree' && state.activeReportFile && !_treeLoaded) {
       _treeLoaded = true;
-      fetch(`/api/reports/${encodeURIComponent(state.activeReportFile)}/tree`)
+      fetch(`api/reports/${encodeURIComponent(state.activeReportFile)}/tree`)
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .then(d => renderD3Tree(d.tree, 'art-tab-tree'))
         .catch(() => {
@@ -2189,7 +2320,7 @@ document.querySelectorAll('.art-tab-btn').forEach(btn => {
     }
     if (btn.dataset.art === 'mindmap' && state.activeReportFile && !_mindmapLoaded) {
       _mindmapLoaded = true;
-      fetch(`/api/reports/${encodeURIComponent(state.activeReportFile)}/mindmap`)
+      fetch(`api/reports/${encodeURIComponent(state.activeReportFile)}/mindmap`)
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .then(d => renderMindMap(d.mindmap, 'art-tab-mindmap'))
         .catch(() => {
@@ -2235,8 +2366,8 @@ async function loadArtifacts(filename) {
   $('artifacts-score-badge').classList.add('hidden');
 
   const [metaRes, evalRes] = await Promise.allSettled([
-    fetch(`/api/reports/${encodeURIComponent(filename)}/meta`).then(r => r.ok ? r.json() : null),
-    fetch(`/api/reports/${encodeURIComponent(filename)}/evaluate`).then(r => r.ok ? r.json() : null),
+    fetch(`api/reports/${encodeURIComponent(filename)}/meta`).then(r => r.ok ? r.json() : null),
+    fetch(`api/reports/${encodeURIComponent(filename)}/evaluate`).then(r => r.ok ? r.json() : null),
   ]);
 
   const meta       = metaRes.status === 'fulfilled' ? metaRes.value : null;
@@ -2293,7 +2424,7 @@ async function loadArtifacts(filename) {
   // Lazy tab loads
   async function loadTab(name, endpoint, render) {
     try {
-      const r = await fetch(`/api/reports/${encodeURIComponent(filename)}/${endpoint}`);
+      const r = await fetch(`api/reports/${encodeURIComponent(filename)}/${endpoint}`);
       if (!r.ok) { $(`art-tab-${name}`).innerHTML=`<div class="text-xs italic p-2" style="color:var(--muted)">Not available for this run.</div>`; return; }
       render(await r.json());
     } catch { $(`art-tab-${name}`).innerHTML=`<div class="text-xs p-2" style="color:#f87171">Failed to load.</div>`; }
@@ -2387,7 +2518,7 @@ async function loadArtifacts(filename) {
 
 // ── D3 Branch Map renderer ───────────────────────────────────────────────────
 const _NODE_COLORS = {
-  query: '#6366f1', thought: '#c084fc', search: '#38bdf8',
+  query: '#500000', thought: '#2F6FB0', search: '#38bdf8',
   url: '#34d399', fetch: '#fbbf24', note: '#a78bfa',
 };
 const _NODE_RADIUS = { query:9, thought:8, search:7, url:6, fetch:5, note:4 };
@@ -2414,9 +2545,9 @@ function renderD3Tree(treeData, containerId) {
   const tip = d3.select(container).append('div')
     .style('position','absolute').style('pointer-events','none')
     .style('display','none').style('max-width','260px')
-    .style('background','#1e1e33').style('border','1px solid #2e2e4a')
+    .style('background','#ffffff').style('border','1px solid #D6D3C4').style('box-shadow','0 6px 20px rgba(0,0,0,.15)')
     .style('border-radius','8px').style('padding','8px 10px')
-    .style('font-size','11px').style('color','#e4e4f0').style('z-index','10')
+    .style('font-size','11px').style('color','#1A1A1A').style('z-index','10')
     .style('line-height','1.5');
 
   const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
@@ -2440,7 +2571,7 @@ function renderD3Tree(treeData, containerId) {
     // Links
     const link = g.selectAll('.tree-link').data(links, d => d.target.data.id);
     link.enter().append('path').attr('class','tree-link')
-      .attr('fill','none').attr('stroke','#2e2e4a').attr('stroke-width',1.2)
+      .attr('fill','none').attr('stroke','#C9C5B4').attr('stroke-width',1.2)
       .merge(link)
       .attr('d', d3.linkHorizontal().x(d=>d.y).y(d=>d.x));
     link.exit().remove();
@@ -2468,7 +2599,7 @@ function renderD3Tree(treeData, containerId) {
 
     nodeEnter.append('circle')
       .attr('r', d => _NODE_RADIUS[d.data.type] || 5)
-      .attr('fill', d => _NODE_COLORS[d.data.type] || '#6366f1')
+      .attr('fill', d => _NODE_COLORS[d.data.type] || '#500000')
       .attr('stroke', '#0b0b14').attr('stroke-width', 1.5)
       .attr('opacity', d => d.data.confirmed === false && d.data.type === 'url' ? 0.45 : 1);
 
@@ -2476,7 +2607,7 @@ function renderD3Tree(treeData, containerId) {
       .attr('dy','0.31em')
       .attr('x', d => (d._children || d.children) ? -10 : 10)
       .attr('text-anchor', d => (d._children || d.children) ? 'end' : 'start')
-      .style('font-size','10px').style('fill','#c8c8e0')
+      .style('font-size','10px').style('fill','#1A1A1A')
       .style('font-family','Inter,sans-serif')
       .text(d => {
         const max = d.data.type === 'search' ? 55 : 38;
@@ -2494,21 +2625,21 @@ function renderD3Tree(treeData, containerId) {
   Object.entries(_NODE_COLORS).forEach(([type, color], i) => {
     legend.append('circle').attr('cx',6).attr('cy',i*18+4).attr('r',5).attr('fill',color);
     legend.append('text').attr('x',16).attr('y',i*18+8)
-      .style('font-size','10px').style('fill','#6a6a90').style('font-family','Inter,sans-serif')
+      .style('font-size','10px').style('fill','#707070').style('font-family','Inter,sans-serif')
       .text(type);
   });
 }
 
 // ── D3 Mind Map renderer (force-directed) ────────────────────────────────────
 const _MM_NODE_COLORS = {
-  query:    '#6366f1',  // indigo
-  thought:  '#c084fc',  // purple
+  query:    '#500000',  // maroon
+  thought:  '#2F6FB0',  // foundation blue
   search:   '#38bdf8',  // blue
   stub:     '#6b7280',  // gray
   enriched: '#34d399',  // green
 };
 const _MM_EDGE_COLORS = {
-  led_to:      '#a78bfa',  // purple
+  led_to:      '#732f2f',  // maroon
   found_via:   '#38bdf8',  // blue
   shares_topic:'#2dd4bf',  // teal
 };
@@ -2549,9 +2680,9 @@ function renderMindMap(data, containerId) {
   const tip = d3.select(container).append('div')
     .style('position','absolute').style('pointer-events','none')
     .style('display','none').style('max-width','320px')
-    .style('background','#1e1e33').style('border','1px solid #2e2e4a')
+    .style('background','#ffffff').style('border','1px solid #D6D3C4').style('box-shadow','0 6px 20px rgba(0,0,0,.15)')
     .style('border-radius','8px').style('padding','8px 10px')
-    .style('font-size','11px').style('color','#e4e4f0').style('z-index','10')
+    .style('font-size','11px').style('color','#1A1A1A').style('z-index','10')
     .style('line-height','1.6').style('white-space','pre-wrap');
 
   const nodes = data.nodes.map(d => ({...d}));
@@ -2597,14 +2728,14 @@ function renderMindMap(data, containerId) {
 
   node.append('circle')
     .attr('r', d => _MM_NODE_RADIUS[d.type] || 5)
-    .attr('fill', d => _MM_NODE_COLORS[d.type] || '#6366f1')
+    .attr('fill', d => _MM_NODE_COLORS[d.type] || '#500000')
     .attr('stroke', '#0b0b14').attr('stroke-width', 1.5);
 
   node.append('text')
     .attr('dy', d => -(_MM_NODE_RADIUS[d.type] || 5) - 3)
     .attr('text-anchor', 'middle')
     .style('font-size', d => d.type === 'query' ? '11px' : '9px')
-    .style('fill', '#c8c8e0')
+    .style('fill', '#1A1A1A')
     .style('font-family', 'Inter,sans-serif')
     .style('pointer-events', 'none')
     .text(d => {
@@ -2624,7 +2755,7 @@ function renderMindMap(data, containerId) {
   Object.entries(_MM_NODE_COLORS).forEach(([type, color], i) => {
     nodeLeg.append('circle').attr('cx', 6).attr('cy', i * 16 + 5).attr('r', 5).attr('fill', color);
     nodeLeg.append('text').attr('x', 16).attr('y', i * 16 + 9)
-      .style('font-size','10px').style('fill','#6a6a90').style('font-family','Inter,sans-serif')
+      .style('font-size','10px').style('fill','#707070').style('font-family','Inter,sans-serif')
       .text(type);
   });
   // Edge type legend (below node legend)
@@ -2634,7 +2765,7 @@ function renderMindMap(data, containerId) {
       .attr('stroke', color).attr('stroke-width', 1.5)
       .attr('stroke-dasharray', rel === 'shares_topic' ? '4,3' : null);
     edgeLeg.append('text').attr('x',26).attr('y', i*16+9)
-      .style('font-size','10px').style('fill','#6a6a90').style('font-family','Inter,sans-serif')
+      .style('font-size','10px').style('fill','#707070').style('font-family','Inter,sans-serif')
       .text(rel.replace(/_/g,' '));
   });
 }
@@ -2659,7 +2790,7 @@ function openSettings() {
   $('discover-results').classList.add('hidden');
   $('discover-empty').classList.add('hidden');
   $('discover-scanning').classList.add('hidden');
-  fetch('/api/settings').then(r=>r.json()).then(d=>{
+  fetch('api/settings').then(r=>r.json()).then(d=>{
     settingsUrl.value   = d.base_url || '';
     settingsModel.value = d.model    || '';
     const backend = d.search_backend || 'duckduckgo';
@@ -2705,7 +2836,7 @@ $('settings-save-btn').addEventListener('click', async () => {
   btn.disabled = true; btn.textContent = 'Saving…';
   settingsSaveStatus.textContent = '';
   try {
-    const r = await fetch('/api/settings', {
+    const r = await fetch('api/settings', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({base_url:url, model, search_backend, langsearch_api_key, brave_api_key, serpapi_key, max_search_results, max_page_content_length, context_limit_tokens}),
     });
@@ -2732,7 +2863,7 @@ $('discover-btn').addEventListener('click', async () => {
   $('discover-empty').classList.add('hidden');
 
   try {
-    const r = await fetch('/api/discover');
+    const r = await fetch('api/discover');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data  = await r.json();
     const eps   = (data.endpoints||[]).filter(e=>e.online);
@@ -2800,7 +2931,7 @@ async function loadMemory() {
   const badge = $('memory-count-badge');
   if (!list) return;
   try {
-    const r = await fetch('/api/memory');
+    const r = await fetch('api/memory');
     if (!r.ok) throw new Error('Failed');
     const data = await r.json();
     const insights = data.insights || [];
@@ -2834,7 +2965,7 @@ async function loadMemory() {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         if (!confirm('Delete this memory insight?')) return;
-        await fetch(`/api/memory/${id}`, {method:'DELETE'});
+        await fetch(`api/memory/${id}`, {method:'DELETE'});
         loadMemory();
       });
     });
