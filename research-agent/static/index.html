@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- When served behind the /deep-research path prefix (NPM panel), anchor all
+  <!-- When served behind the /DeepResearch path prefix (NPM panel), anchor all
        relative URLs to it so assets/API resolve correctly with OR without a
        trailing slash. Direct :8765 access (no prefix) is unaffected. -->
-  <script>if(location.pathname.indexOf('/deep-research')===0)document.write('<base href="/deep-research/">');</script>
+  <script>if(location.pathname.indexOf('/DeepResearch')===0)document.write('<base href="/DeepResearch/">');</script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Deep Research · Texas A&M Foundation</title>
   <link rel="icon" type="image/png" href="static/tamu-foundation-logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -33,7 +33,7 @@
       --maroon-dark: #3c001c;
       --accent-glow: rgba(80,0,0,.16);
       /* Foundation gold + light blue secondary accents */
-      --gold:      #C6A84B;
+      --gold:      #9F7D23;
       --blue:      #2F6FB0;   /* Foundation light-blue accent */
       --blue-soft: #3B82F6;
       /* agent/role semantics, darkened for legibility on a light surface */
@@ -48,7 +48,7 @@
     html, body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Inter', system-ui, sans-serif;
+      font-family: 'Outfit', system-ui, sans-serif;
       min-height: 100vh;
     }
 
@@ -403,41 +403,82 @@
                      background-size:200% 100%; }
     .nb-orphan { background:rgba(21,128,61,.05); border-color:rgba(21,128,61,.2); }
 
-    /* Foundation top bar */
-    .fdn-header { background: var(--accent); border-bottom: 3px solid var(--gold); }
-    .fdn-header h1 { color:#fff; }
-    .fdn-header p  { color: rgba(255,255,255,.72); }
-    .fdn-logo { background:#fff; border-radius:8px; padding:3px; }
+    /* ── TAMF Sidebar ──────────────────────────────────────────────────────── */
+    #tamf-sidebar {
+      position: fixed; top: 0; left: 0; height: 100vh; width: 64px;
+      background: #500000; border-right: 1px solid #3c001c;
+      display: flex; flex-direction: column; overflow: hidden;
+      transition: width 200ms ease-in-out; z-index: 50;
+    }
+    #tamf-sidebar:hover { width: 220px; }
+    #tamf-sidebar .brand {
+      display: flex; align-items: center; height: 56px; padding: 0 12px;
+      background: #3c001c; border-bottom: 1px solid #3c001c; flex-shrink: 0;
+    }
+    #tamf-sidebar .brand img { width: 40px; height: 40px; object-fit: contain; flex-shrink: 0; }
+    #tamf-sidebar .brand span {
+      color: white; font-weight: 700; font-size: 14px; white-space: nowrap;
+      margin-left: 8px; opacity: 0; transition: opacity 150ms;
+    }
+    #tamf-sidebar:hover .brand span { opacity: 1; }
+    #tamf-sidebar nav { display: flex; flex-direction: column; gap: 4px; padding: 8px; flex: 1; }
+    #tamf-sidebar nav a {
+      display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+      color: rgba(255,255,255,0.7); text-decoration: none; font-size: 14px;
+      font-weight: 500; white-space: nowrap; transition: background 150ms, color 150ms;
+    }
+    #tamf-sidebar nav a:hover { background: rgba(255,255,255,0.1); color: white; }
+    #tamf-sidebar nav a.active { background: #3c001c; color: white; }
+    #tamf-sidebar nav a svg { flex-shrink: 0; }
+    #tamf-sidebar nav a span { opacity: 0; transition: opacity 150ms; }
+    #tamf-sidebar:hover nav a span { opacity: 1; }
+
+    /* Push content right of sidebar */
+    body { padding-left: 64px; }
+
+    /* Utility bar (replaces branded header) */
+    .util-bar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 8px 24px; display: flex; align-items: center; justify-content: flex-end;
+      gap: 10px; position: sticky; top: 0; z-index: 20;
+    }
   </style>
 </head>
 
 <body class="min-h-screen flex flex-col" style="background:var(--bg)">
 
-<!-- ══════════════════════════════ HEADER ════════════════════════════════════ -->
-<header class="fdn-header sticky top-0 z-20">
-  <div class="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-
-    <!-- Logo / Home button -->
-    <button id="home-btn" type="button" class="flex items-center gap-3 cursor-pointer hover:opacity-90 transition-opacity"
-            style="background:transparent;border:none;padding:0" title="Return to dashboard">
-      <img src="static/tamu-foundation-logo.png" alt="Texas A&M Foundation" class="fdn-logo w-9 h-9 object-contain shrink-0" />
-      <div class="text-left">
-        <h1 class="text-sm font-bold leading-none">Deep Research</h1>
-        <p class="text-xs mt-0.5">Texas A&amp;M Foundation · Live Research Workspace</p>
-      </div>
-    </button>
-
-    <!-- Right controls -->
-    <div class="flex items-center gap-2.5">
-      <span id="active-agent-badge" class="hidden text-xs px-2.5 py-1 rounded-full font-medium agent-active chip-researcher"></span>
-      <button id="settings-btn" class="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5" style="border:1px solid var(--border)">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
-        Settings
-      </button>
-      <span id="server-status" class="text-xs px-2.5 py-1 rounded-full status-checking">Checking…</span>
-    </div>
+<!-- TAMF Sidebar -->
+<aside id="tamf-sidebar">
+  <div class="brand">
+    <img src="static/tamu-foundation-logo.png" alt="Texas A&M Foundation" onerror="this.style.display='none'" />
+    <span>Deep Research</span>
   </div>
-</header>
+  <nav>
+    <a href="/">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      </svg>
+      <span>Home</span>
+    </a>
+    <a id="home-btn" href="#" class="active">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <span>Research</span>
+    </a>
+  </nav>
+</aside>
+
+<!-- Utility bar — settings + status (replaces branded header) -->
+<div class="util-bar">
+  <span id="active-agent-badge" class="hidden text-xs px-2.5 py-1 rounded-full font-medium agent-active chip-researcher"></span>
+  <button id="settings-btn" class="btn-ghost text-xs px-3 py-1.5 flex items-center gap-1.5" style="border:1px solid var(--border)">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+    Settings
+  </button>
+  <span id="server-status" class="text-xs px-2.5 py-1 rounded-full status-checking">Checking…</span>
+</div>
 
 <!-- ════════════════════════════ QUERY BAR ═══════════════════════════════════ -->
 <div class="border-b px-6 py-4" style="background:var(--surface);border-color:var(--border)">
