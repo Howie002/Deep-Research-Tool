@@ -10,6 +10,9 @@ load_dotenv()
 # ── LM Studio ──────────────────────────────────────────────────────────────
 LM_STUDIO_BASE_URL: str = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
 LM_STUDIO_MODEL: str = os.getenv("LM_STUDIO_MODEL", "local-model")
+# Bearer token for the LLM endpoint. LM Studio needs none; the cluster's
+# LiteLLM router requires a key (its master_key is the literal "none").
+LM_STUDIO_API_KEY: str = os.getenv("LM_STUDIO_API_KEY", "none")
 
 # ── Search ─────────────────────────────────────────────────────────────────
 SEARCH_BACKEND: str = os.getenv("SEARCH_BACKEND", "duckduckgo").lower()

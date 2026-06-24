@@ -20,17 +20,47 @@ it via `run_adaptive(query, depth=...)` or the run.py `adaptive` subcommand.
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
 
 from claims import Claim, ClaimsModel, ClaimStatus, Evidence, preset_budget
-from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
 from adaptive_planner import decompose_query, next_action, strategic_replan
-from adaptive_evaluator import integrate_result
+from adaptive_evaluator import apply_evaluation, evaluate_result, integrate_result
+
+
+# ── Concurrency (batched-round fetch + evaluate) ─────────────────────────────
+# When enabled, after the planner picks a fetch the executor drains up to
+# (batch-1) additional already-queued URLs and fetches + evaluates them in
+# parallel threads. The eval LLM calls hit the proxy concurrently; applying
+# results to the claims model happens serially on the main thread.
+#
+# DEFAULT OFF (decision 2026-06-05): on a single shared Nano the eval calls are
+# prefill-bound, so concurrency only buys ~4% (fetch-I/O overlap) while adding
+# GPU contention for other aisandbox users. Kept flag-ready — flip on once
+# Death Star is serving (multi-GPU spreads the prefill via least-busy routing).
+# Toggle / A-B via env:
+#   DR_CONCURRENCY=1   → enable batched-round fetch + evaluate
+#   DR_BATCH_SIZE=<n>  → override the per-depth default batch size
+_CONCURRENCY_ENABLED = os.getenv("DR_CONCURRENCY", "0").strip().lower() in ("1", "true", "yes", "on")
+_DEPTH_BATCH_DEFAULT = {"light": 3, "medium": 5, "heavy": 8, "ultra": 8}
+
+
+def _resolve_batch_size(depth: str) -> int:
+    env = os.getenv("DR_BATCH_SIZE", "").strip()
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    return _DEPTH_BATCH_DEFAULT.get((depth or "").lower(), 5)
 
 
 # ── URL harvesting from search output ────────────────────────────────────────
@@ -98,7 +128,7 @@ def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[..., Optional[st
         req = urllib.request.Request(
             LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {LM_STUDIO_API_KEY}"},
             method="POST",
         )
         try:
@@ -591,9 +621,18 @@ def run_adaptive(
             pass
 
     # ── LLM caller tracks usage for budget accounting ───────────────────
+    # _track is called from the concurrent evaluate_result() threads, so the
+    # counter increment must be guarded.
+    _track_lock = threading.Lock()
     def _track() -> None:
-        cm.budget.llm_calls_used += 1
+        with _track_lock:
+            cm.budget.llm_calls_used += 1
     llm = _build_llm_caller(_track)
+
+    # Concurrency setup for this run (batched-round fetch + evaluate).
+    _batch_size = _resolve_batch_size(depth)
+    if _CONCURRENCY_ENABLED and _batch_size > 1:
+        _log(f"Concurrency ON — fetch+evaluate batch size {_batch_size}", agent="Planner")
 
     # ── Tools ────────────────────────────────────────────────────────────
     from tools import WebSearchTool, FetchPageTool
@@ -803,21 +842,108 @@ def run_adaptive(
                 consecutive_unproductive += 1
                 cm.log_action(action, "(duplicate fetch skipped)")
                 continue
-            _log(f"📄 Fetch: {url}", agent="Researcher")
-            try:
-                result = fetch_tool._run(url=url)
-            except Exception as exc:
-                _log(f"Fetch failed: {exc}", agent="Researcher")
-                consecutive_unproductive += 1
-                cm.log_action(action, f"(fetch failed: {exc})")
-                continue
-            cm.budget.fetches_used += 1
-            cm.fetched_urls.add(url)
-            _fetched_norm.add(_norm_url(url))
-            consecutive_searches = 0   # reset circuit-breaker on a fetch
-            evidence_kind = "fetch"
-            evidence_url = url
-            evidence_cat = _classify_url(url)
+
+            # ── Build the fetch batch ──────────────────────────────────────
+            # Planner's chosen URL first, then drain additional already-queued
+            # surfaced URLs (independent fetches) up to the batch size, clamped
+            # to remaining fetch budget. Concurrency off → batch of 1 (the
+            # original sequential path, unchanged).
+            batch_urls = [url]
+            if _CONCURRENCY_ENABLED and _batch_size > 1:
+                remaining = max(1, cm.budget.max_fetches - cm.budget.fetches_used)
+                cap = min(_batch_size, remaining)
+                for s in surfaced_urls:
+                    if len(batch_urls) >= cap:
+                        break
+                    su = s.get("url", "")
+                    if not su or su in batch_urls or _norm_url(su) in _fetched_norm:
+                        continue
+                    batch_urls.append(su)
+
+            if len(batch_urls) == 1:
+                # ── Single fetch (sequential path) ─────────────────────────
+                _log(f"📄 Fetch: {url}", agent="Researcher")
+                try:
+                    result = fetch_tool._run(url=url)
+                except Exception as exc:
+                    _log(f"Fetch failed: {exc}", agent="Researcher")
+                    consecutive_unproductive += 1
+                    cm.log_action(action, f"(fetch failed: {exc})")
+                    continue
+                cm.budget.fetches_used += 1
+                cm.fetched_urls.add(url)
+                _fetched_norm.add(_norm_url(url))
+                consecutive_searches = 0   # reset circuit-breaker on a fetch
+                evidence_kind = "fetch"
+                evidence_url = url
+                evidence_cat = _classify_url(url)
+                # falls through to the common single-result integrate below
+            else:
+                # ── Concurrent batched fetch + evaluate ────────────────────
+                # Each worker thread does fetch (web I/O) → evaluate_result
+                # (LLM call, PURE — no cm mutation). The eval calls hit the
+                # proxy concurrently → vLLM batches them. Results are then
+                # applied to the claims model SERIALLY on this thread.
+                _log(f"📄 Fetch batch ({len(batch_urls)}) — concurrent:", agent="Researcher")
+                for bu in batch_urls:
+                    _log(f"   • {bu}", agent="Researcher")
+                consecutive_searches = 0
+
+                def _fetch_and_eval(u: str):
+                    try:
+                        text = fetch_tool._run(url=u)
+                    except Exception as exc:
+                        return (u, None, None, f"fetch failed: {exc}")
+                    parsed = evaluate_result(cm, "fetch", text, u, llm, subject=cm.query)
+                    return (u, text, parsed, None)
+
+                t_batch = time.time()
+                results: list[tuple] = []
+                with ThreadPoolExecutor(max_workers=len(batch_urls)) as _ex:
+                    _futs = {_ex.submit(_fetch_and_eval, u): u for u in batch_urls}
+                    for _fut in as_completed(_futs):
+                        try:
+                            results.append(_fut.result())
+                        except Exception as exc:
+                            results.append((_futs[_fut], None, None, f"worker error: {exc}"))
+                batch_elapsed = time.time() - t_batch
+
+                # ── Serial merge: apply each parsed verdict to the model ────
+                batch_progress = False
+                applied_n = 0
+                for (u, text, parsed, err) in results:
+                    if err or text is None:
+                        _log(f"Fetch failed: {u} ({err})", agent="Researcher")
+                        continue
+                    cm.budget.fetches_used += 1
+                    cm.fetched_urls.add(u)
+                    _fetched_norm.add(_norm_url(u))
+                    cm.log_action({"type": "fetch", "url": u}, f"{len(text)} chars (batched)")
+                    cat = _classify_url(u)
+                    upd = apply_evaluation(cm, parsed, "fetch", u, cat)
+                    applied_n += 1
+                    if upd.get("updated_claims") or upd.get("new_claim_ids"):
+                        batch_progress = True
+                    _emit({
+                        "type":           "claims_update",
+                        "evidence_kind":  "fetch",
+                        "evidence_url":   u,
+                        "updated_claims": upd.get("updated_claims", []),
+                        "new_claim_ids":  upd.get("new_claim_ids", []),
+                        "parse_failed":   upd.get("parse_failed", False),
+                        "budget":         cm.budget.snapshot(),
+                    })
+                if batch_progress:
+                    consecutive_unproductive = 0
+                    _emit_plan_panel(cm, _emit)
+                else:
+                    consecutive_unproductive += 1
+                _log(
+                    f"Fetch batch: applied {applied_n}/{len(batch_urls)} pages in "
+                    f"{batch_elapsed:.1f}s. {cm.summary_line()}",
+                    agent="Evaluator",
+                )
+                continue   # batch fully handled — skip the common single-result integrate
         else:
             consecutive_unproductive += 1
             cm.log_action(action, f"(unknown action type: {action['type']})")

@@ -26,6 +26,7 @@ from config import (
     BRAVE_API_KEY,
     CONTEXT_LIMIT_TOKENS,
     LANGSEARCH_API_KEY,
+    LM_STUDIO_API_KEY,
     LM_STUDIO_BASE_URL,
     LM_STUDIO_MODEL,
     MAX_PAGE_CONTENT_LENGTH,
@@ -45,6 +46,13 @@ from source_classifier import SourceDiversityTracker, classify
 
 _stream_emitter = None
 
+# Serialises the sink callbacks (stream-event append + fetched-content persist).
+# The batched-round executor fetches/evaluates K results in worker threads, so
+# these callbacks fire concurrently; both append to per-job files and would
+# interleave/corrupt without a lock. The lock only guards the (fast) sink call,
+# not the network fetch, so it doesn't serialise the actual I/O.
+_sink_lock = threading.Lock()
+
 
 def set_stream_emitter(emit_fn) -> None:
     """Register a function(event: dict) that forwards events to the .stream file."""
@@ -55,7 +63,8 @@ def set_stream_emitter(emit_fn) -> None:
 def _emit_stream(event: dict) -> None:
     if _stream_emitter:
         try:
-            _stream_emitter(event)
+            with _sink_lock:
+                _stream_emitter(event)
         except Exception:
             pass
 
@@ -98,7 +107,8 @@ def set_workspace_reader(reader_fn) -> None:
 def _persist_fetched(url: str, title: str, category: str, text: str) -> None:
     if _fetch_persister:
         try:
-            _fetch_persister(url, title, category, text)
+            with _sink_lock:
+                _fetch_persister(url, title, category, text)
         except Exception:
             pass
 
@@ -145,7 +155,7 @@ def _classify_usefulness(query: str, result: dict) -> dict:
         resp = requests.post(
             LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
             json=payload,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {LM_STUDIO_API_KEY}"},
             timeout=30,
         )
         resp.raise_for_status()
@@ -206,7 +216,7 @@ def _classify_page_about_subject(subject: str, url: str, page_text: str) -> dict
         resp = requests.post(
             LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
             json=payload,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {LM_STUDIO_API_KEY}"},
             timeout=45,
         )
         resp.raise_for_status()
@@ -997,9 +1007,13 @@ class FetchPageTool(BaseTool):
             reason = "context budget" if limit < MAX_PAGE_CONTENT_LENGTH else "page size limit"
             text = text[:limit] + f"\n\n[... truncated at {limit} chars due to {reason} ...]"
 
-        _budget.record(len(text))
-        _fetched.mark(url)
-        _diversity.record(category)
+        # Shared-tracker mutations — guarded so concurrent batched fetches don't
+        # lose-update these counters. Fast critical section; the network I/O above
+        # ran unlocked, so fetches still overlap.
+        with _sink_lock:
+            _budget.record(len(text))
+            _fetched.mark(url)
+            _diversity.record(category)
 
         # Persist the full extracted text to a per-job cache so the
         # post-synth grounding validator can check whether citations to

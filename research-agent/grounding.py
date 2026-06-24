@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
 
 
 # ── Workspace state reader (parsed from the stream file) ─────────────────────
@@ -309,7 +309,7 @@ def _call_llm(system: str, user: str, timeout: float = 45.0, max_tokens: int = 3
         r = requests.post(
             LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions",
             json=payload,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {LM_STUDIO_API_KEY}"},
             timeout=timeout,
         )
         r.raise_for_status()

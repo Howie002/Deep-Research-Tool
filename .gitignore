@@ -36,3 +36,8 @@ local_settings.py
 
 # Logs
 *.log
+
+# runtime learning state + edit backups (excluded from git)
+research-agent/learning_store.json
+*.dark-backup
+*.pre-basepath

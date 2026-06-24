@@ -18,6 +18,7 @@ import re
 from typing import Callable, Optional
 
 from claims import ClaimsModel, Evidence, ClaimStatus
+from source_classifier import classify, credibility_weight
 
 LLMFn = Callable[[str, str], Optional[str]]
 
@@ -149,25 +150,43 @@ def _parse(raw: str) -> Optional[dict]:
         return None
 
 
-def integrate_result(
+def evaluate_result(
     cm: ClaimsModel,
     evidence_kind: str,         # "search" | "fetch"
     evidence_text: str,
     evidence_url: str,
-    evidence_category: str,
     llm: LLMFn,
     subject: str = "",          # query/subject string used for new-claim focus
+) -> Optional[dict]:
+    """LLM-evaluate a result against the current open claims.
+
+    PURE: reads a snapshot of the claims (for the prompt) but does NOT mutate
+    `cm`, so a batch of results can be evaluated concurrently in worker threads.
+    Returns the parsed verdict dict, or None if the LLM output didn't parse.
+    Feed the result to apply_evaluation() on the main thread to mutate `cm`.
+    """
+    raw = llm(_EVAL_SYSTEM, _eval_user_prompt(cm, evidence_kind, evidence_text, evidence_url, subject))
+    return _parse(raw or "")
+
+
+def apply_evaluation(
+    cm: ClaimsModel,
+    parsed: Optional[dict],
+    evidence_kind: str,         # "search" | "fetch"
+    evidence_url: str,
+    evidence_category: str,
 ) -> dict:
-    """Update the claims model from a fresh action result. Returns a
-    compact summary dict describing changes made."""
+    """Apply a parsed verdict (from evaluate_result) to the claims model.
+
+    SERIAL: mutates `cm`; call on the main thread, once per result, after the
+    concurrent evaluate_result() calls have all returned. Returns a compact
+    summary dict describing changes made.
+    """
     summary: dict = {
         "updated_claims": [],
         "new_claim_ids":  [],
         "parse_failed":   False,
     }
-
-    raw = llm(_EVAL_SYSTEM, _eval_user_prompt(cm, evidence_kind, evidence_text, evidence_url, subject))
-    parsed = _parse(raw or "")
     if not isinstance(parsed, dict):
         summary["parse_failed"] = True
         return summary
@@ -202,10 +221,18 @@ def integrate_result(
             # Search-derived update with no per-update URL → unusable.
             continue
 
+        # Source-credibility tiering: weight the evaluator's confidence delta by
+        # how authoritative the evidence's source is — an org's own .edu/.gov
+        # page about itself counts for more than UGC. Classify the per-evidence
+        # URL (more precise than the action-level category, esp. for search
+        # results where each hit has its own domain).
+        ev_cat = classify(ev_url) if ev_url else (evidence_category or "")
+
         try:
             delta = float(upd.get("confidence_delta", 0.0))
         except (TypeError, ValueError):
             delta = 0.0
+        delta *= credibility_weight(ev_cat)
         # Tension flag: source-level disagreement that may not be real refutation.
         # When tension=true, store as supporting evidence (sources differ but the
         # claim may still hold) but apply a small confidence penalty rather than a
@@ -225,7 +252,7 @@ def integrate_result(
                 url=ev_url,
                 quote=quote[:300],
                 supports=supports,
-                category=evidence_category,
+                category=ev_cat,
             ),
             confidence_delta=delta,
         )
@@ -258,3 +285,22 @@ def integrate_result(
         summary["new_claim_ids"].append(new.id)
 
     return summary
+
+
+def integrate_result(
+    cm: ClaimsModel,
+    evidence_kind: str,         # "search" | "fetch"
+    evidence_text: str,
+    evidence_url: str,
+    evidence_category: str,
+    llm: LLMFn,
+    subject: str = "",          # query/subject string used for new-claim focus
+) -> dict:
+    """Sequential convenience wrapper: evaluate then apply in one call.
+
+    Preserves the original single-call API for the non-concurrent path. The
+    batched-round executor instead calls evaluate_result() concurrently across
+    a batch and apply_evaluation() serially on the main thread.
+    """
+    parsed = evaluate_result(cm, evidence_kind, evidence_text, evidence_url, llm, subject)
+    return apply_evaluation(cm, parsed, evidence_kind, evidence_url, evidence_category)

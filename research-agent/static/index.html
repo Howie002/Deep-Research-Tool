@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- TAMF dark-theme no-flash init: apply stored theme before first paint.
+       Shares the 'tamf-theme' localStorage key with all TAMF tools. -->
+  <script>try{if(localStorage.getItem('tamf-theme')==='dark'){document.documentElement.dataset.theme='dark';}}catch(e){}</script>
   <!-- When served behind the /DeepResearch path prefix (NPM panel), anchor all
        relative URLs to it so assets/API resolve correctly with OR without a
        trailing slash. Direct :8765 access (no prefix) is unaffected. -->
@@ -442,6 +445,137 @@
       padding: 8px 24px; display: flex; align-items: center; justify-content: flex-end;
       gap: 10px; position: sticky; top: 0; z-index: 20;
     }
+
+    /* Theme toggle (sidebar bottom) — mirrors nav link styling */
+    #theme-toggle-btn {
+      display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin: 8px;
+      color: rgba(255,255,255,0.7); background: transparent; border: none; cursor: pointer;
+      font-size: 14px; font-weight: 500; font-family: inherit; white-space: nowrap;
+      text-align: left; border-radius: 6px; transition: background 150ms, color 150ms;
+      flex-shrink: 0;
+    }
+    #theme-toggle-btn:hover { background: rgba(255,255,255,0.1); color: white; }
+    #theme-toggle-btn svg { flex-shrink: 0; }
+    #theme-toggle-btn span { opacity: 0; transition: opacity 150ms; }
+    #tamf-sidebar:hover #theme-toggle-btn span { opacity: 1; }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       TAMF DARK THEME — html[data-theme="dark"]
+       Shared pattern across TAMF tools (localStorage key 'tamf-theme').
+       Only neutrals are remapped; maroon brand chrome (sidebar, primary
+       buttons, white-on-maroon) is preserved. Maroon TEXT on light ground
+       remaps to --d-maroon-text. Scoped to screen so print/PDF stays light.
+       ═══════════════════════════════════════════════════════════════════════ */
+    @media screen {
+      html[data-theme="dark"] {
+        color-scheme: dark;
+        --d-bg:          #121212;
+        --d-surface-1:   #1e1e1e;
+        --d-surface-2:   #262626;
+        --d-surface-3:   #2f2f2f;
+        --d-border:      #343434;
+        --d-text:        #e8e6e3;
+        --d-muted:       #a6a6a6;
+        --d-dim:         #7f7f7f;
+        --d-maroon-text: #e0a3a3;
+        /* Re-ground the app palette on the dark neutrals */
+        --bg:        var(--d-bg);
+        --surface:   var(--d-surface-1);
+        --surface-2: var(--d-surface-2);
+        --surface-3: var(--d-surface-3);
+        --border:    var(--d-border);
+        --border-2:  #404040;
+        --text:      var(--d-text);
+        --muted:     var(--d-muted);
+        --subtle:    var(--d-dim);
+        /* Lighter secondary accents for dark ground */
+        --blue: #7eaede;
+        --gold: #c6a84b;
+      }
+
+      /* Prose (markdown reports) — light text, readable code blocks */
+      html[data-theme="dark"] .prose { color: #d6d4d1; }
+      html[data-theme="dark"] .prose h1,
+      html[data-theme="dark"] .prose h2,
+      html[data-theme="dark"] .prose h3 { color: var(--d-text); }
+      html[data-theme="dark"] .prose a { color: var(--d-maroon-text); }
+      html[data-theme="dark"] .prose a:hover { color: #eec1c1; }
+      html[data-theme="dark"] .prose strong { color: #f2f0ed; }
+      html[data-theme="dark"] .prose code { background: var(--d-surface-3); color: var(--d-maroon-text); }
+      html[data-theme="dark"] .prose blockquote { border-left-color: var(--gold); color: var(--d-muted); }
+
+      /* Citations / tooltips */
+      html[data-theme="dark"] sup.cite-ref:hover { color: var(--d-maroon-text); }
+      html[data-theme="dark"] .cite-tooltip {
+        background: var(--d-surface-2); border-color: var(--border-2);
+        color: var(--d-text); box-shadow: 0 8px 30px rgba(0,0,0,.55);
+      }
+      html[data-theme="dark"] .cite-tooltip a { color: var(--d-maroon-text); }
+
+      /* Maroon-on-light text accents → soft maroon */
+      html[data-theme="dark"] .text-gradient {
+        background: linear-gradient(135deg, var(--d-maroon-text) 0%, var(--gold) 100%);
+        -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+      }
+      html[data-theme="dark"] .tab-btn.active { color: var(--d-maroon-text); }
+      html[data-theme="dark"] .tab-btn.active::after { background: var(--d-maroon-text); }
+      html[data-theme="dark"] .art-tab-btn.active { color: var(--d-maroon-text); background: var(--d-surface-3); }
+
+      /* Inputs — dark fields, soft-maroon focus ring */
+      html[data-theme="dark"] .field { background: var(--d-surface-2); border-color: var(--border-2); }
+      html[data-theme="dark"] .field:focus {
+        border-color: rgba(224,163,163,.55);
+        box-shadow: 0 0 0 3px rgba(224,163,163,.12);
+      }
+
+      /* Buttons (primary stays solid maroon — preserved) */
+      html[data-theme="dark"] .btn-danger { color: #f87171; background: rgba(239,68,68,.10); }
+      html[data-theme="dark"] .btn-danger:hover { background: rgba(239,68,68,.18); }
+
+      /* Agent chips — light text on tinted dark ground */
+      html[data-theme="dark"] .chip-researcher { background: rgba(59,130,246,.15); color: #93c5fd; border-color: rgba(59,130,246,.3); }
+      html[data-theme="dark"] .chip-analyst    { background: rgba(249,115,22,.15);  color: #fdba74; border-color: rgba(249,115,22,.3); }
+      html[data-theme="dark"] .chip-synth      { background: rgba(16,185,129,.15);  color: #6ee7b7; border-color: rgba(16,185,129,.3); }
+      html[data-theme="dark"] .chip-system     { background: rgba(224,163,163,.10); color: var(--d-maroon-text); border-color: rgba(224,163,163,.3); }
+
+      /* Source badges */
+      html[data-theme="dark"] .badge-found     { background: rgba(126,174,222,.14); color: var(--blue); }
+      html[data-theme="dark"] .badge-confirmed { background: rgba(16,185,129,.15);  color: #6ee7b7; }
+      html[data-theme="dark"] .badge-academic  { background: rgba(224,163,163,.12); color: var(--d-maroon-text); }
+      html[data-theme="dark"] .badge-gov       { background: rgba(16,185,129,.12);  color: #86efac; }
+      html[data-theme="dark"] .badge-news      { background: rgba(198,168,75,.16);  color: #e3c878; }
+      html[data-theme="dark"] .badge-social    { background: rgba(239,68,68,.12);   color: #fca5a5; }
+
+      /* Stage pipeline */
+      html[data-theme="dark"] .stage-done    { background: rgba(16,185,129,.10); border-color: rgba(16,185,129,.4); color: #34d399; }
+      html[data-theme="dark"] .stage-active  {
+        background: rgba(224,163,163,.08); border-color: rgba(224,163,163,.45);
+        color: var(--d-maroon-text); box-shadow: 0 0 12px rgba(224,163,163,.12);
+      }
+      html[data-theme="dark"] .stage-pending { background: var(--d-surface-2); }
+
+      /* Grade badges */
+      html[data-theme="dark"] .grade-A { background: rgba(16,185,129,.18); color: #34d399; }
+      html[data-theme="dark"] .grade-B { background: rgba(126,174,222,.16); color: var(--blue); }
+      html[data-theme="dark"] .grade-C { background: rgba(198,168,75,.18);  color: #e3c878; }
+      html[data-theme="dark"] .grade-D { background: rgba(249,115,22,.16);  color: #fdba74; }
+      html[data-theme="dark"] .grade-F { background: rgba(239,68,68,.16);   color: #fca5a5; }
+
+      /* Stream rails / status / report list */
+      html[data-theme="dark"] .ev-step { border-left-color: rgba(255,255,255,.10); }
+      html[data-theme="dark"] .status-online  { background: rgba(16,185,129,.15); color: #34d399; }
+      html[data-theme="dark"] .status-offline { background: rgba(239,68,68,.15);  color: #f87171; }
+      html[data-theme="dark"] .report-item { background: var(--d-surface-2); }
+      html[data-theme="dark"] .report-item:hover { background: var(--d-surface-3); }
+      html[data-theme="dark"] .report-item.active { border-color: rgba(224,163,163,.5); background: rgba(224,163,163,.07); }
+
+      /* Cards: deeper shadow on dark; skeleton shimmer mid-tone */
+      html[data-theme="dark"] .card, html[data-theme="dark"] .card-elevated { box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+      html[data-theme="dark"] .skeleton-line {
+        background: linear-gradient(90deg, var(--d-surface-3) 25%, #3a3a3a 50%, var(--d-surface-3) 75%);
+        background-size: 200% 100%;
+      }
+    }
   </style>
 </head>
 
@@ -468,6 +602,42 @@
       <span>Research</span>
     </a>
   </nav>
+  <button id="theme-toggle-btn" type="button" aria-label="Switch to dark mode" title="Dark mode">
+    <svg id="theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+    </svg>
+    <svg id="theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/>
+      <path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+    </svg>
+    <span id="theme-toggle-label">Dark mode</span>
+  </button>
+  <script>
+    // TAMF theme toggle — flips html[data-theme], persists to the shared
+    // 'tamf-theme' localStorage key (same key across all TAMF tools).
+    (function () {
+      var btn   = document.getElementById('theme-toggle-btn');
+      var moon  = document.getElementById('theme-icon-moon');
+      var sun   = document.getElementById('theme-icon-sun');
+      var label = document.getElementById('theme-toggle-label');
+      function sync() {
+        var dark = document.documentElement.dataset.theme === 'dark';
+        moon.style.display = dark ? 'none' : '';
+        sun.style.display  = dark ? '' : 'none';
+        label.textContent  = dark ? 'Light mode' : 'Dark mode';
+        btn.title = label.textContent;
+        btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+      }
+      btn.addEventListener('click', function () {
+        var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = next;
+        try { localStorage.setItem('tamf-theme', next); } catch (e) { /* storage disabled — session-only */ }
+        sync();
+      });
+      sync(); // reflect whatever the no-flash init applied
+    })();
+  </script>
 </aside>
 
 <!-- Utility bar — settings + status (replaces branded header) -->
@@ -1468,7 +1638,7 @@ function renderNotebook() {
     const rel      = relMatch ? relMatch[1].trim() : '';
     html += `<div class="rounded-lg p-3 mb-2 nb-orphan">
       <div class="text-xs font-semibold mb-1" style="color:#6ee7b7">📝 Field Note</div>
-      <p class="text-xs leading-relaxed" style="color:#2a2a2a">${esc(body.length>300?body.slice(0,300)+'…':body)}</p>
+      <p class="text-xs leading-relaxed" style="color:var(--text)">${esc(body.length>300?body.slice(0,300)+'…':body)}</p>
       ${rel ? `<p class="text-xs leading-relaxed mt-1.5 px-2 py-1 rounded" style="background:rgba(139,92,246,.1);border-left:2px solid #c084fc;color:#c4b5fd"><span style="font-weight:600;color:#c084fc">◈ Relevance: </span>${esc(rel.length>200?rel.slice(0,200)+'…':rel)}</p>` : ''}
     </div>`;
   }
@@ -2586,9 +2756,9 @@ function renderD3Tree(treeData, containerId) {
   const tip = d3.select(container).append('div')
     .style('position','absolute').style('pointer-events','none')
     .style('display','none').style('max-width','260px')
-    .style('background','#ffffff').style('border','1px solid #D6D3C4').style('box-shadow','0 6px 20px rgba(0,0,0,.15)')
+    .style('background','var(--surface)').style('border','1px solid var(--border)').style('box-shadow','0 6px 20px rgba(0,0,0,.15)')
     .style('border-radius','8px').style('padding','8px 10px')
-    .style('font-size','11px').style('color','#1A1A1A').style('z-index','10')
+    .style('font-size','11px').style('color','var(--text)').style('z-index','10')
     .style('line-height','1.5');
 
   const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
@@ -2648,7 +2818,7 @@ function renderD3Tree(treeData, containerId) {
       .attr('dy','0.31em')
       .attr('x', d => (d._children || d.children) ? -10 : 10)
       .attr('text-anchor', d => (d._children || d.children) ? 'end' : 'start')
-      .style('font-size','10px').style('fill','#1A1A1A')
+      .style('font-size','10px').style('fill','var(--text)')
       .style('font-family','Inter,sans-serif')
       .text(d => {
         const max = d.data.type === 'search' ? 55 : 38;
@@ -2666,7 +2836,7 @@ function renderD3Tree(treeData, containerId) {
   Object.entries(_NODE_COLORS).forEach(([type, color], i) => {
     legend.append('circle').attr('cx',6).attr('cy',i*18+4).attr('r',5).attr('fill',color);
     legend.append('text').attr('x',16).attr('y',i*18+8)
-      .style('font-size','10px').style('fill','#707070').style('font-family','Inter,sans-serif')
+      .style('font-size','10px').style('fill','var(--muted)').style('font-family','Inter,sans-serif')
       .text(type);
   });
 }
@@ -2721,9 +2891,9 @@ function renderMindMap(data, containerId) {
   const tip = d3.select(container).append('div')
     .style('position','absolute').style('pointer-events','none')
     .style('display','none').style('max-width','320px')
-    .style('background','#ffffff').style('border','1px solid #D6D3C4').style('box-shadow','0 6px 20px rgba(0,0,0,.15)')
+    .style('background','var(--surface)').style('border','1px solid var(--border)').style('box-shadow','0 6px 20px rgba(0,0,0,.15)')
     .style('border-radius','8px').style('padding','8px 10px')
-    .style('font-size','11px').style('color','#1A1A1A').style('z-index','10')
+    .style('font-size','11px').style('color','var(--text)').style('z-index','10')
     .style('line-height','1.6').style('white-space','pre-wrap');
 
   const nodes = data.nodes.map(d => ({...d}));
@@ -2776,7 +2946,7 @@ function renderMindMap(data, containerId) {
     .attr('dy', d => -(_MM_NODE_RADIUS[d.type] || 5) - 3)
     .attr('text-anchor', 'middle')
     .style('font-size', d => d.type === 'query' ? '11px' : '9px')
-    .style('fill', '#1A1A1A')
+    .style('fill', 'var(--text)')
     .style('font-family', 'Inter,sans-serif')
     .style('pointer-events', 'none')
     .text(d => {
@@ -2796,7 +2966,7 @@ function renderMindMap(data, containerId) {
   Object.entries(_MM_NODE_COLORS).forEach(([type, color], i) => {
     nodeLeg.append('circle').attr('cx', 6).attr('cy', i * 16 + 5).attr('r', 5).attr('fill', color);
     nodeLeg.append('text').attr('x', 16).attr('y', i * 16 + 9)
-      .style('font-size','10px').style('fill','#707070').style('font-family','Inter,sans-serif')
+      .style('font-size','10px').style('fill','var(--muted)').style('font-family','Inter,sans-serif')
       .text(type);
   });
   // Edge type legend (below node legend)
@@ -2806,7 +2976,7 @@ function renderMindMap(data, containerId) {
       .attr('stroke', color).attr('stroke-width', 1.5)
       .attr('stroke-dasharray', rel === 'shares_topic' ? '4,3' : null);
     edgeLeg.append('text').attr('x',26).attr('y', i*16+9)
-      .style('font-size','10px').style('fill','#707070').style('font-family','Inter,sans-serif')
+      .style('font-size','10px').style('fill','var(--muted)').style('font-family','Inter,sans-serif')
       .text(rel.replace(/_/g,' '));
   });
 }

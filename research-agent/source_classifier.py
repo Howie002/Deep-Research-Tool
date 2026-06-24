@@ -108,6 +108,31 @@ _HIGH_QUALITY = {"[Academic]", "[Government]", "[Non-profit/NGO]"}
 _LOW_QUALITY  = {"[Social/UGC]"}
 
 
+# ── Source-credibility weighting (positive tiering) ─────────────────────────
+# Multiplier applied to the evaluator's per-evidence confidence delta, so the
+# claims model trusts authoritative sources more and low-credibility UGC less.
+# Authoritative = an org's own .edu/.gov page about itself, official stats,
+# scholarly refs. Tuned conservatively so it boosts genuine primaries without
+# runaway over-promotion (paired with claims.SUPPORT_CONFIDENCE = 0.60).
+_CREDIBILITY_WEIGHT = {
+    "[Government]":      1.4,
+    "[Academic]":       1.4,
+    "[Non-profit/NGO]": 1.2,
+    "[Reference]":      1.15,
+    "[News]":           1.0,
+    "[Professional]":   1.0,
+    "[Web]":            1.0,
+    "[Social/UGC]":     0.7,
+}
+
+
+def credibility_weight(category: str) -> float:
+    """Confidence-delta multiplier for a source category (see classify()).
+    >1 boosts authoritative sources; <1 dampens low-credibility ones; unknown
+    categories are neutral (1.0)."""
+    return _CREDIBILITY_WEIGHT.get(category or "", 1.0)
+
+
 class SourceDiversityTracker:
     """
     Tracks the category breakdown of fetched sources and returns

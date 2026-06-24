@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
 
 _LOCK = threading.Lock()
 
@@ -217,7 +217,7 @@ def _call_llm(system: str, user: str, timeout: float = 120.0) -> Optional[str]:
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {LM_STUDIO_API_KEY}"},
         method="POST",
     )
     try:

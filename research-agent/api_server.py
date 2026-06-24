@@ -76,10 +76,36 @@ sweep_stale_jobs(JOBS_DIR)
 
 limiter = Limiter(key_func=get_remote_address)
 
+import os as _os
+import hmac as _hmac
+import hashlib as _hashlib
+
+# Foundation AI gate: reject direct VLAN port access that bypasses the dashboard
+# proxy. Only requests carrying the dashboard's HMAC-signed X-Foundation-* headers
+# are allowed. No-op until GATE_HMAC_SECRET is set (safe to ship before activation).
+# Dependency (not BaseHTTPMiddleware) so it never wraps/buffers the SSE responses.
+_GATE_SECRET = _os.getenv("GATE_HMAC_SECRET", "").encode()
+
+
+def verify_gateway(request: Request) -> None:
+    if not _GATE_SECRET:
+        return
+    user_id = request.headers.get("x-foundation-user", "")
+    email = request.headers.get("x-foundation-email", "")
+    role = request.headers.get("x-foundation-role", "")
+    sig = request.headers.get("x-foundation-sig", "")
+    expected = _hmac.new(
+        _GATE_SECRET, f"{user_id}|{email}|{role}".encode(), _hashlib.sha256
+    ).hexdigest()
+    if not sig or not _hmac.compare_digest(sig, expected):
+        raise HTTPException(status_code=403, detail="Access through the Foundation AI Dashboard.")
+
+
 app = FastAPI(
     title="Research Agent",
     description="Multi-agent web research powered by CrewAI and LM Studio.",
     version="2.0.0",
+    dependencies=[Depends(verify_gateway)],
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -2221,8 +2247,28 @@ async def report_mindmap(filename: str) -> dict:
 
 _ENV_FILE = BASE_DIR / ".env"
 
-# Known local AI server ports to probe
-_DISCOVERY_PORTS = [1234, 11434, 8080, 8000, 1111, 4891, 5001, 7860]
+# Ports probed during /api/discover. Includes both the legacy local-AI ports
+# (LM Studio, Ollama, etc.) and the AI Distributed Inference Cluster ports
+# (LiteLLM router on 4000, vLLM workers on 8001/8003/8004/8020-8022).
+_DISCOVERY_PORTS = [
+    # Local AI servers
+    1234,   # LM Studio
+    11434,  # Ollama
+    8080,   # LocalAI
+    8000,   # generic
+    1111,   # LocalAI alt
+    4891,   # LM Studio (legacy)
+    5001,   # GPT4All
+    7860,   # generic
+    # AI Distributed Inference Cluster
+    4000,   # LiteLLM cluster router
+    8020,   # vLLM Nano (single-instance)
+    8001,   # vLLM Nano (stack)
+    8003,   # vLLM Super A
+    8004,   # vLLM Super B
+    8021,   # vLLM Death Star
+    8022,   # vLLM Death Star (variant)
+]
 
 # Known endpoint types by port / path signature
 _ENDPOINT_NAMES = {
@@ -2231,54 +2277,108 @@ _ENDPOINT_NAMES = {
     8080:  "Local AI",
     1111:  "Local AI",
     4891:  "LM Studio (legacy)",
+    4000:  "LiteLLM (cluster router)",
+    8001:  "vLLM (Nano stack)",
+    8003:  "vLLM (Super A)",
+    8004:  "vLLM (Super B)",
+    8020:  "vLLM (Nano)",
+    8021:  "vLLM (Death Star)",
+    8022:  "vLLM (Death Star)",
 }
 
 
-def _local_ips() -> list[str]:
-    """Return all local IP addresses plus localhost."""
-    ips: list[str] = ["localhost", "127.0.0.1"]
+def _scan_hosts() -> list[str]:
+    """Hosts to probe during /api/discover.
+
+    Includes:
+      * localhost / 127.0.0.1
+      * Every interface IP on this machine (`hostname -I`)
+      * The host portion of the currently-configured LM_STUDIO_BASE_URL — so
+        once the user points the base URL at a remote host, future scans
+        automatically include it.
+      * INFERENCE_HOSTS env var (comma-separated) for explicit additions —
+        matches the same env var name used by Foundation Chat / K-1 Tracker.
+    """
+    hosts: list[str] = ["localhost", "127.0.0.1"]
     try:
         out = subprocess.check_output(["hostname", "-I"], text=True, timeout=2)
-        ips += [ip.strip() for ip in out.split() if ip.strip()]
+        hosts += [ip.strip() for ip in out.split() if ip.strip()]
     except Exception:
         pass
     try:
-        ips.append(socket.gethostbyname(socket.gethostname()))
+        hosts.append(socket.gethostbyname(socket.gethostname()))
     except Exception:
         pass
+    # Pull host out of LM_STUDIO_BASE_URL so a one-time base-URL change is
+    # enough to make the scan find sibling endpoints on the same host.
+    try:
+        from urllib.parse import urlparse
+        configured = os.environ.get("LM_STUDIO_BASE_URL", "")
+        if configured:
+            host = urlparse(configured).hostname
+            if host:
+                hosts.append(host)
+    except Exception:
+        pass
+    # User-supplied list (e.g. INFERENCE_HOSTS=10.2.30.28,10.2.30.32).
+    extra = os.environ.get("INFERENCE_HOSTS", "")
+    for h in extra.split(","):
+        h = h.strip()
+        if h:
+            hosts.append(h)
     # de-dup, keep order
     seen: set[str] = set()
-    unique = []
-    for ip in ips:
-        if ip not in seen:
-            seen.add(ip)
-            unique.append(ip)
+    unique: list[str] = []
+    for h in hosts:
+        if h and h not in seen:
+            seen.add(h)
+            unique.append(h)
     return unique
 
 
+# Backwards-compat alias — older imports/tests may still reference _local_ips.
+_local_ips = _scan_hosts
+
+
+# Auth keys to try when probing. None first (most LM Studio / Ollama setups
+# require no auth); then "none" for the cluster's LiteLLM router; then
+# "lm-studio" for legacy gated configs. First success wins.
+_PROBE_AUTH_CHAIN = [None, "none", "lm-studio"]
+
+
 def _probe_endpoint(base_url: str, port: int) -> dict | None:
-    """Try to fetch /v1/models or /api/tags from base_url. Returns endpoint dict or None."""
+    """Try to fetch /v1/models or /api/tags from base_url, walking the auth
+    chain until one combination returns 2xx. Returns endpoint dict or None."""
     import requests as _req
-    # OpenAI-compatible /v1/models
     for path in ["/v1/models", "/api/tags"]:
-        try:
-            r = _req.get(base_url.rstrip("/") + path, timeout=1.5)
-            if r.ok:
+        for key in _PROBE_AUTH_CHAIN:
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+            try:
+                r = _req.get(base_url.rstrip("/") + path, timeout=1.5, headers=headers)
+            except Exception:
+                continue
+            if not r.ok:
+                # If the server explicitly says "auth required", continue
+                # the auth chain — otherwise this path is just dead, try next.
+                if r.status_code in (401, 403):
+                    continue
+                break
+            try:
                 data = r.json()
-                # OpenAI format: {"data": [{"id": ...}]}
-                models = [m["id"] for m in data.get("data", []) if m.get("id")]
-                # Ollama format: {"models": [{"name": ...}]}
-                if not models:
-                    models = [m.get("name") or m.get("id") for m in data.get("models", []) if m.get("name") or m.get("id")]
-                label = _ENDPOINT_NAMES.get(port, "Local AI")
-                return {
-                    "url": base_url,
-                    "label": label,
-                    "models": models,
-                    "online": True,
-                }
-        except Exception:
-            continue
+            except Exception:
+                break
+            # OpenAI format: {"data": [{"id": ...}]}
+            models = [m["id"] for m in data.get("data", []) if m.get("id")]
+            # Ollama format: {"models": [{"name": ...}]}
+            if not models:
+                models = [m.get("name") or m.get("id") for m in data.get("models", []) if m.get("name") or m.get("id")]
+            label = _ENDPOINT_NAMES.get(port, "Local AI")
+            return {
+                "url": base_url,
+                "label": label,
+                "models": models,
+                "online": True,
+            }
     return None
 
 
@@ -2389,7 +2489,7 @@ def _write_env_key(key: str, value: str) -> None:
 @app.get("/api/discover", response_model=DiscoverResponse)
 async def discover_endpoints() -> DiscoverResponse:
     """Scan common local ports for running AI servers and return their models."""
-    ips = _local_ips()
+    ips = _scan_hosts()
     candidates: list[tuple[str, int]] = []
     for ip in ips:
         for port in _DISCOVERY_PORTS:
@@ -2474,7 +2574,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    # no-store so the browser always re-fetches the UI shell — prevents a
+    # stale cached copy from masking UI/theme changes during iteration.
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

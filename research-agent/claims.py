@@ -24,6 +24,16 @@ from enum import Enum
 from typing import Iterable, Optional
 
 
+# Confidence at/above which a claim with supporting evidence is promoted to
+# SUPPORTED. Lowered 0.75→0.60 (2026-06-05): with the evaluator's conservative
+# per-evidence deltas (0.5 strong / 0.3 secondary), 0.75 required 2+ pieces of
+# evidence for ANY claim, so a single authoritative primary source (e.g. an
+# org's own .edu page stating its dean) stalled at PARTIAL — runs were showing
+# "0 of N supported" despite solid primary-source quotes. Paired with
+# source-credibility weighting of deltas (see adaptive_evaluator).
+SUPPORT_CONFIDENCE = 0.60
+
+
 class ClaimStatus(str, Enum):
     UNKNOWN       = "unknown"
     INVESTIGATING = "investigating"   # action dispatched, awaiting result
@@ -98,7 +108,7 @@ class Claim:
             return
         if self.contradictions and not self.support:
             self.status = ClaimStatus.REFUTED
-        elif self.confidence >= 0.75 and self.support:
+        elif self.confidence >= SUPPORT_CONFIDENCE and self.support:
             self.status = ClaimStatus.SUPPORTED
         elif self.support or self.contradictions:
             self.status = ClaimStatus.PARTIAL
