@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import os
 import re
+import time
 
 import litellm
 from crewai import Agent, Crew, LLM, Process, Task
 
 from config import LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from telemetry_report import report_usage
 from tools import FetchPageTool, WebSearchTool
 
 # LiteLLM (used internally by CrewAI) requires OPENAI_API_KEY to be set
@@ -65,12 +67,43 @@ _orig_completion = litellm.completion
 _orig_acompletion = litellm.acompletion
 
 
+def _report_telemetry(response, model_hint, started: float, status: str = "ok") -> None:
+    """Fire one usage event to the dashboard from a litellm ModelResponse.
+
+    Every CrewAI agent call flows through litellm.(a)completion, so this single
+    point covers the core research reasoning. Best-effort; never raises.
+    (Auxiliary direct chat/completions calls in tools/grounding/evaluator are
+    not routed through litellm and are not yet instrumented.)
+    """
+    try:
+        usage = getattr(response, "usage", None)
+        pt = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+        ct = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+        report_usage(
+            model=getattr(response, "model", None) or model_hint,
+            feature="crew",
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            status=status,
+        )
+    except Exception:
+        pass
+
+
 def _patched_completion(*args, **kwargs):
     stop = list(kwargs.get("stop") or [])
     had_obs_stop = _OBS_STOP in stop
     if had_obs_stop:
         kwargs["stop"] = [s for s in stop if s != _OBS_STOP] or None
-    return _patch_response(_orig_completion(*args, **kwargs), had_obs_stop)
+    started = time.perf_counter()
+    try:
+        response = _orig_completion(*args, **kwargs)
+    except Exception:
+        _report_telemetry(None, kwargs.get("model"), started, "error")
+        raise
+    _report_telemetry(response, kwargs.get("model"), started, "ok")
+    return _patch_response(response, had_obs_stop)
 
 
 async def _patched_acompletion(*args, **kwargs):
@@ -78,7 +111,14 @@ async def _patched_acompletion(*args, **kwargs):
     had_obs_stop = _OBS_STOP in stop
     if had_obs_stop:
         kwargs["stop"] = [s for s in stop if s != _OBS_STOP] or None
-    return _patch_response(await _orig_acompletion(*args, **kwargs), had_obs_stop)
+    started = time.perf_counter()
+    try:
+        response = await _orig_acompletion(*args, **kwargs)
+    except Exception:
+        _report_telemetry(None, kwargs.get("model"), started, "error")
+        raise
+    _report_telemetry(response, kwargs.get("model"), started, "ok")
+    return _patch_response(response, had_obs_stop)
 
 
 litellm.completion = _patched_completion

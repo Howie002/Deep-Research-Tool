@@ -14,6 +14,12 @@ LM_STUDIO_MODEL: str = os.getenv("LM_STUDIO_MODEL", "local-model")
 # LiteLLM router requires a key (its master_key is the literal "none").
 LM_STUDIO_API_KEY: str = os.getenv("LM_STUDIO_API_KEY", "none")
 
+# ── Cross-tool usage telemetry (dashboard Telemetry & Usage tab) ─────────────
+# Shared HMAC secret with the dashboard; blank = telemetry off. Set
+# TELEMETRY_HMAC_SECRET in .env to enable.
+TELEMETRY_HMAC_SECRET: str = os.getenv("TELEMETRY_HMAC_SECRET", "")
+DASHBOARD_INTERNAL_URL: str = os.getenv("DASHBOARD_INTERNAL_URL", "http://127.0.0.1:3010")
+
 # ── Search ─────────────────────────────────────────────────────────────────
 SEARCH_BACKEND: str = os.getenv("SEARCH_BACKEND", "duckduckgo").lower()
 LANGSEARCH_API_KEY: str = os.getenv("LANGSEARCH_API_KEY", "")
