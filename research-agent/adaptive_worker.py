@@ -32,6 +32,7 @@ from typing import Callable, Optional
 
 from claims import Claim, ClaimsModel, ClaimStatus, Evidence, preset_budget
 from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from telemetry_report import report_from_response, report_usage
 from adaptive_planner import decompose_query, next_action, strategic_replan
 from adaptive_evaluator import apply_evaluation, evaluate_result, integrate_result
 
@@ -131,12 +132,24 @@ def _build_llm_caller(track_fn: Callable[[], None]) -> Callable[..., Optional[st
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {LM_STUDIO_API_KEY}"},
             method="POST",
         )
+        _t0 = time.perf_counter()
         try:
             with urllib.request.urlopen(req, timeout=240) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
+            # Cross-tool usage telemetry (best-effort) — this is the adaptive
+            # engine's core LLM caller, so it covers the bulk of a research run.
+            report_from_response(
+                body, LM_STUDIO_MODEL, "research",
+                duration_ms=int((time.perf_counter() - _t0) * 1000),
+            )
             msg = body.get("choices", [{}])[0].get("message", {}) or {}
             return (msg.get("content") or msg.get("reasoning_content") or "").strip() or None
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError):
+            report_usage(
+                model=LM_STUDIO_MODEL, feature="research",
+                duration_ms=int((time.perf_counter() - _t0) * 1000),
+                status="error",
+            )
             return None
     return call
 

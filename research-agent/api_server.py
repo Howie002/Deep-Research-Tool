@@ -59,6 +59,7 @@ from job_manager import (
     save_run,
     sweep_stale_jobs,
 )
+from telemetry_report import report_usage
 
 BASE_DIR           = Path(__file__).parent
 JOBS_DIR           = BASE_DIR / "jobs"
@@ -440,6 +441,10 @@ async def start_job(request: Request, body: JobCreateRequest) -> JobCreateRespon
         gap_context=body.gap_context,
         depth=body.depth,
         thorough=thorough,
+        # Attribute this job's LLM usage to the signed-in user (the dashboard
+        # proxy injects these headers; absent on direct/un-gated calls).
+        user_id=request.headers.get("x-foundation-user"),
+        user_email=request.headers.get("x-foundation-email"),
     )
     try:
         launch_worker(job_id, JOBS_DIR, WORKER_SCRIPT)
@@ -487,7 +492,7 @@ async def cancel_job(job_id: str) -> CancelJobResponse:
 
 
 @app.post("/api/clarify", response_model=ClarifyResponse)
-async def generate_clarify_questions(body: ClarifyRequest) -> ClarifyResponse:
+async def generate_clarify_questions(request: Request, body: ClarifyRequest) -> ClarifyResponse:
     """Generate 3–5 prompt-specific clarifying questions from the LLM."""
     base_url = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1").rstrip("/")
     model = os.environ.get("LM_STUDIO_MODEL", "local-model")
@@ -516,7 +521,20 @@ async def generate_clarify_questions(body: ClarifyRequest) -> ClarifyResponse:
                 },
             )
             resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"].strip()
+            _data = resp.json()
+            # This runs in the API process (not the worker subprocess), so the
+            # process-global user isn't set here — attribute explicitly from the
+            # request headers.
+            _usage = _data.get("usage") or {}
+            report_usage(
+                user_id=request.headers.get("x-foundation-user"),
+                user_email=request.headers.get("x-foundation-email"),
+                model=model,
+                feature="clarify",
+                prompt_tokens=_usage.get("prompt_tokens", 0) or 0,
+                completion_tokens=_usage.get("completion_tokens", 0) or 0,
+            )
+            content = _data["choices"][0]["message"]["content"].strip()
             # Extract JSON array even if wrapped in markdown fences
             match = re.search(r'\[.*\]', content, re.DOTALL)
             if match:

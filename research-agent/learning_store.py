@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from telemetry_report import report_from_response
 
 _LOCK = threading.Lock()
 
@@ -223,6 +224,7 @@ def _call_llm(system: str, user: str, timeout: float = 120.0) -> Optional[str]:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
+        report_from_response(body, LM_STUDIO_MODEL, "learning")
         return body.get("choices", [{}])[0].get("message", {}).get("content") or None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError):
         return None

@@ -37,6 +37,7 @@ from config import (
     SERPAPI_KEY,
     THOROUGH_MODE,
 )
+from telemetry_report import report_from_response
 from scratchpad import log
 from source_classifier import SourceDiversityTracker, classify
 
@@ -159,7 +160,9 @@ def _classify_usefulness(query: str, result: dict) -> dict:
             timeout=30,
         )
         resp.raise_for_status()
-        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        _data = resp.json()
+        report_from_response(_data, LM_STUDIO_MODEL, "classify")
+        raw = _data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
     except Exception:
         return {"verdict": "useful", "reason": "verdict unavailable (classifier error)"}
 
@@ -220,7 +223,9 @@ def _classify_page_about_subject(subject: str, url: str, page_text: str) -> dict
             timeout=45,
         )
         resp.raise_for_status()
-        raw = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        _data = resp.json()
+        report_from_response(_data, LM_STUDIO_MODEL, "page-verdict")
+        raw = _data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
     except Exception:
         return {"verdict": "on_topic", "reason": "verdict unavailable (classifier error)"}
 

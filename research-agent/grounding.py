@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 import requests
 
 from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
+from telemetry_report import report_from_response
 
 
 # ── Workspace state reader (parsed from the stream file) ─────────────────────
@@ -313,7 +314,9 @@ def _call_llm(system: str, user: str, timeout: float = 45.0, max_tokens: int = 3
             timeout=timeout,
         )
         r.raise_for_status()
-        return r.json().get("choices", [{}])[0].get("message", {}).get("content") or None
+        _data = r.json()
+        report_from_response(_data, LM_STUDIO_MODEL, "grounding")
+        return _data.get("choices", [{}])[0].get("message", {}).get("content") or None
     except Exception:
         return None
 

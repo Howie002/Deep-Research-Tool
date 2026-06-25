@@ -276,6 +276,13 @@ def main() -> None:
         query = data["query"]
         depth = str(data.get("depth", "medium")).lower()
         clarifications = str(data.get("clarifications", ""))
+        # Attribute every LLM call in this worker subprocess to whoever submitted
+        # the job (carried in the job file by the API). One user per subprocess.
+        try:
+            from telemetry_report import set_user
+            set_user(data.get("user_id"), data.get("user_email"))
+        except Exception:
+            pass
     except Exception as exc:
         job_file.write_text(
             json.dumps({"status": "error", "query": "", "log": [], "result": f"Failed to read job file: {exc}"}),

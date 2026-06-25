@@ -33,6 +33,8 @@ def create_job(
     gap_context: str | None = None,
     depth: str = "medium",
     thorough: bool = False,
+    user_id: str | None = None,
+    user_email: str | None = None,
 ) -> str:
     """Write a new job file and return the job_id."""
     job_id = str(uuid.uuid4())
@@ -45,6 +47,10 @@ def create_job(
         "thorough": thorough,
         "result": "",
         "started_at": datetime.now(timezone.utc).isoformat(),
+        # Who submitted this job — carried into the worker subprocess (which reads
+        # this file) so its LLM usage is attributed to them in dashboard telemetry.
+        "user_id": user_id or None,
+        "user_email": user_email or None,
     }
     if parent_report:
         data["parent_report"] = parent_report
