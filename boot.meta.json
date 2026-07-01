@@ -1,11 +1,11 @@
 {
   "key": "deep-research",
   "name": "Deep Research Agent",
-  "command": "cd research-agent && source .venv/bin/activate && python run.py api",
-  "port": 8765,
-  "health": "http://localhost:8765/health",
+  "command": "bash boot.sh",
+  "port": 3015,
+  "health": "http://localhost:3015/DeepResearch",
   "depends_on": [
     "llm-proxy"
   ],
-  "note": "Entry is run.py (nested research-agent/). Do NOT use start.sh (interactive setup wizard). NPM path: /DeepResearch → 10.2.35.10:8765 (rewrite strips prefix; proxy_buffering off; proxy_read_timeout 3600s)."
+  "note": "Next.js frontend (frontend/, :3015) + FastAPI research backend (internal 127.0.0.1:8765, research-agent/run.py api). Dashboard routing plane proxies /DeepResearch -> :3015 (strip_prefix=0); the frontend rewrites /api/* + /health to the backend. Live runs stream over SSE. Migrated from the FastAPI-only static UI 2026-07-01. Do NOT use research-agent/start.sh (interactive wizard)."
 }

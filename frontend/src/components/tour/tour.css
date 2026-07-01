@@ -1,0 +1,110 @@
+/* ============================================================================
+   CANONICAL TAMF TUTORIAL POPUP STYLING  (driver.js `.tamf-tour` popover)
+   ----------------------------------------------------------------------------
+   Single source of truth for the guided-tour popup look across ALL Foundation
+   tools. Imported by the tour engine (TourProvider.tsx), NOT by globals.css, so
+   the whole tour is a self-contained, portable unit.
+
+   Adding the tour to a new tool? Copy this file VERBATIM (with the rest of
+   src/components/tour/ + src/lib/tour/manifest.ts). Do NOT fork the values —
+   every tool's tutorial popup must look identical. Sizing was bumped ~25% over
+   the original for readability (2026-06-18).
+
+   driver.js renders the popover at <body>, so these rules are namespaced by its
+   `.tamf-tour` class (set via popoverClass), not by any app root class.
+   Brand: square corners (TAMF border-radius:0), maroon top accent, red arrow.
+   ========================================================================== */
+
+.driver-popover.tamf-tour {
+  background: #ffffff;
+  border-radius: 0;
+  border: 1px solid #E6E6E6;
+  border-top: 3px solid #500000;
+  box-shadow: 0 12px 34px rgba(26, 26, 26, 0.24);
+  max-width: 420px;
+  padding: 18px 20px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.driver-popover.tamf-tour .driver-popover-title {
+  color: #1A1A1A;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.driver-popover.tamf-tour .driver-popover-description {
+  color: #4D4D4D;
+  font-size: 16px;
+  line-height: 1.55;
+  margin-top: 6px;
+}
+.driver-popover.tamf-tour .driver-popover-progress-text {
+  color: #8A8A8A;
+  font-size: 14px;
+}
+
+/* Bold red pointer instead of driver.js's small white triangle. driver.css
+   colors a different border edge per placement, so set the red per side. */
+.driver-popover.tamf-tour .driver-popover-arrow { border-width: 11px; }
+.driver-popover.tamf-tour .driver-popover-arrow-side-left   { border-left-color:   #DC2626; }
+.driver-popover.tamf-tour .driver-popover-arrow-side-right  { border-right-color:  #DC2626; }
+.driver-popover.tamf-tour .driver-popover-arrow-side-top    { border-top-color:    #DC2626; }
+.driver-popover.tamf-tour .driver-popover-arrow-side-bottom { border-bottom-color: #DC2626; }
+/* Keep center-aligned arrows centered at the larger border width. */
+.driver-popover.tamf-tour .driver-popover-arrow-side-left.driver-popover-arrow-align-center,
+.driver-popover.tamf-tour .driver-popover-arrow-side-right.driver-popover-arrow-align-center { margin-top: -11px; }
+.driver-popover.tamf-tour .driver-popover-arrow-side-top.driver-popover-arrow-align-center,
+.driver-popover.tamf-tour .driver-popover-arrow-side-bottom.driver-popover-arrow-align-center { margin-left: -11px; }
+
+/* Buttons — square, maroon, uppercase (TAMF gesture). */
+.driver-popover.tamf-tour button.driver-popover-next-btn,
+.driver-popover.tamf-tour button.driver-popover-prev-btn {
+  background: #500000;
+  color: #ffffff;
+  border: 1px solid #500000;
+  border-radius: 0;
+  padding: 7px 15px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-shadow: none;
+}
+.driver-popover.tamf-tour button.driver-popover-next-btn:hover,
+.driver-popover.tamf-tour button.driver-popover-prev-btn:hover {
+  background: #3C001C;
+  border-color: #3C001C;
+}
+.driver-popover.tamf-tour button.driver-popover-prev-btn {
+  background: #ffffff;
+  color: #500000;
+}
+.driver-popover.tamf-tour button.driver-popover-prev-btn:hover {
+  background: #500000;
+  color: #ffffff;
+}
+.driver-popover.tamf-tour button.driver-popover-close-btn {
+  color: #8A8A8A;
+  font-size: 22px;
+}
+.driver-popover.tamf-tour button.driver-popover-close-btn:hover {
+  color: #500000;
+}
+
+/* Dark theme — both tools share the html[data-theme="dark"] + 'tamf-theme'
+   convention, so this works identically wherever the file is dropped. */
+@media screen {
+  html[data-theme="dark"] .driver-popover.tamf-tour {
+    background: #1e1e1e;
+    border-color: #343434;
+    border-top-color: #500000;
+  }
+  html[data-theme="dark"] .driver-popover.tamf-tour .driver-popover-title { color: #e8e6e3; }
+  html[data-theme="dark"] .driver-popover.tamf-tour .driver-popover-description { color: #b5b5b5; }
+  html[data-theme="dark"] .driver-popover.tamf-tour .driver-popover-progress-text { color: #7f7f7f; }
+  html[data-theme="dark"] .driver-popover.tamf-tour button.driver-popover-prev-btn {
+    background: #1e1e1e; color: #e0a3a3;
+  }
+  html[data-theme="dark"] .driver-popover.tamf-tour button.driver-popover-prev-btn:hover {
+    background: #500000; color: #ffffff;
+  }
+}
