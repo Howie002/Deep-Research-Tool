@@ -10,6 +10,12 @@ const nextConfig: NextConfig = {
   basePath: BASE_PATH,
   env: { NEXT_PUBLIC_BASE_PATH: BASE_PATH },
 
+  // The rewrite proxy defaults to a 30s timeout — far too short for the
+  // long-lived SSE research stream (/api/jobs/{id}/stream runs for minutes) and
+  // long agent calls. Raise it to 1 hour (matches the original route's ceiling)
+  // so streams and long runs aren't cut at 30s.
+  experimental: { proxyTimeout: 3_600_000 },
+
   // The FastAPI backend serves its routes at ROOT (/api/..., /health). Proxy
   // both to the internal backend on :8765. The SSE endpoint
   // (/api/jobs/:id/stream) rides the /api/* rule — Next streams the chunked
