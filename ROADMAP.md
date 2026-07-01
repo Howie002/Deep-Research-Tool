@@ -446,3 +446,23 @@ Surfaced by the first two adaptive test runs on Stephen Guetersloh:
 - `[ ]` **MCP parity** — expose artifact endpoints via the MCP server so Claude Desktop can retrieve run data
 - `[ ]` **Export bundles** — download all run artifacts as a single ZIP file
 - `[ ]` **DOCX export** — export the full run (report, plan, notes, sources, stats) as a Word document using `pypandoc` + a local `pandoc` binary; requires `pandoc` to be installed on the host (`apt install pandoc`)
+
+---
+
+## 2026-07-01 — Migrated UI to Next.js (over the FastAPI backend, SSE)
+The CrewAI multi-agent backend + SSE streaming are unchanged; the UI moved.
+- `frontend/` = Next.js (basePath `/DeepResearch`, port **3015**) replacing the
+  3197-line static SPA. Port: query + depth (light/medium/heavy/ultra) + thorough
+  + Clarify-first modal; **live SSE stream** rendering all ~20 event types; 4-stage
+  pipeline; artifact tabs (Plan/Notes/Draft/Sources/Thoughts/**D3 Mind Map**)
+  accumulated from the stream; markdown report (marked); reports history
+  (search / PDF+DOCX export / delete); settings modal.
+- Backend runs INTERNAL on **127.0.0.1:8765** (routes at root); frontend rewrites
+  `/api/*` + `/health` → :8765. SSE streams through the rewrite.
+- New `boot.sh` runs both; `proxy_routes` `/DeepResearch` 8765 → 3015,
+  **strip_prefix 1 → 0**.
+- Fix: `experimental.proxyTimeout` = 1h so the long-lived SSE stream isn't cut at
+  the 30s rewrite-proxy default.
+- NOTE: live research runs remain gated on the Death Star CUDA blocker (model
+  crash-loops); the migrated UI + SSE transport are verified and ready.
+Commits: migration `b0da63e`, proxyTimeout `4d34475`.
