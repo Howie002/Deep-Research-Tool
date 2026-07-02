@@ -22,12 +22,12 @@ export const TOUR_MANIFEST: TourSegment[] = [
     steps: [
       {
         title: 'Welcome to the Deep Research Agent',
-        body: 'A multi-agent researcher on Foundation local inference: it plans, searches the web, reads sources, and synthesizes a cited report — streaming every step live. Use Next / Back, or press Esc to leave anytime.',
+        body: 'A multi-agent researcher on Foundation local inference: it plans, searches the web, reads sources, and synthesizes a cited report, streaming every step live. Use Next / Back, or press Esc to leave anytime.',
       },
       {
         tourId: 'dr-main',
         title: 'Ask, then watch it work',
-        body: 'Enter a research question and Start — or “Clarify first” to answer a couple of focusing questions. As it runs you’ll see a live stream of searches, reads, notes, and reasoning, a stage pipeline, artifact tabs (Plan / Notes / Draft / Sources / Thoughts / Mind Map), and the final cited report. Past reports (searchable, exportable to PDF/DOCX) are in the sidebar.',
+        body: 'Enter a research question and Start, or use “Clarify first” to answer a couple of focusing questions. As it runs you’ll see a live stream of searches, reads, notes, and reasoning, a stage pipeline, artifact tabs (Plan / Notes / Draft / Sources / Thoughts / Mind Map), and the final cited report. Past reports (searchable, exportable to PDF/DOCX) are in the sidebar.',
         side: 'top',
         align: 'center',
       },
