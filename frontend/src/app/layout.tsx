@@ -4,7 +4,7 @@ import AppShell from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
   title: "Deep Research Agent | Texas A&M Foundation",
-  description: "Multi-agent deep research on Foundation local inference — plan, search, read, synthesize, and cite.",
+  description: "Multi-agent deep research on Foundation local inference: plan, search, read, synthesize, and cite.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

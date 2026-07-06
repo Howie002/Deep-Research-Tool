@@ -17,12 +17,10 @@ async function jsonOrThrow(res: Response) {
 
 export interface JobCreate {
   query: string;
-  clarifications?: string;
   no_learn?: boolean;
   parent_report?: string;
   gap_context?: string;
-  depth?: 'light' | 'medium' | 'heavy' | 'ultra';
-  thorough?: boolean;
+  depth?: 'light' | 'medium' | 'heavy';
 }
 
 export interface ReportSummary {
@@ -46,12 +44,6 @@ export const resumeJob = (id: string) => fetch(api(`/jobs/${id}/resume`), { meth
 export const streamUrl = (id: string) => api(`/jobs/${id}/stream`);
 export const jobStatus = (id: string, logOffset = 0) =>
   fetch(api(`/jobs/${id}?log_offset=${logOffset}`)).then(jsonOrThrow) as Promise<Record<string, unknown>>;
-
-export async function clarify(query: string): Promise<{ questions: { question: string; placeholder?: string }[] }> {
-  return jsonOrThrow(await fetch(api('/clarify'), {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }),
-  }));
-}
 
 export async function listReports(page = 1, pageSize = 50, tags = ''): Promise<{ reports?: ReportSummary[] } & Record<string, unknown>> {
   const p = new URLSearchParams({ page: String(page), page_size: String(pageSize) });

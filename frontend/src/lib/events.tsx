@@ -30,7 +30,7 @@ export function describeEvent(ev: RawEvent): Row | null {
   const type = ev.type || 'log';
   switch (type) {
     case 'agent_switch':
-      return { icon: '▶', tone: 'text-violet-300 font-semibold', body: <>Stage {s(ev.stage)}/3 — <b>{s(ev.agent)}</b></> };
+      return { icon: '▶', tone: 'text-violet-300 font-semibold', body: <>Stage {s(ev.stage)}/3 · <b>{s(ev.agent)}</b></> };
     case 'search':
       return { icon: '⌕', tone: 'text-indigo-300', body: <><span className="font-medium text-indigo-400">Search:</span> {s(ev.query)}</> };
     case 'search_result': {
@@ -64,9 +64,9 @@ export function describeEvent(ev: RawEvent): Row | null {
     case 'log':
       return ev.message ? { icon: '⚙', tone: 'text-zinc-400', body: s(ev.message) } : null;
     case 'thought_node':
-      return ev.label ? { icon: '🧠', tone: 'text-purple-300 font-semibold', body: <>{s(ev.label)}{ev.rationale ? <span className="text-zinc-500 italic font-normal"> — {s(ev.rationale)}</span> : null}</> } : null;
+      return ev.label ? { icon: '🧠', tone: 'text-purple-300 font-semibold', body: <>{s(ev.label)}{ev.rationale ? <span className="text-zinc-500 italic font-normal">: {s(ev.rationale)}</span> : null}</> } : null;
     case 'iteration_tick':
-      return { icon: '↺', tone: 'text-zinc-500 text-xs', body: <>Stage {s(ev.stage)}{ev.agent ? ` · ${s(ev.agent)}` : ''}{Number(ev.pass) > 1 ? ` — pass ${s(ev.pass)}` : ''}</> };
+      return { icon: '↺', tone: 'text-zinc-500 text-xs', body: <>Stage {s(ev.stage)}{ev.agent ? ` · ${s(ev.agent)}` : ''}{Number(ev.pass) > 1 ? ` · pass ${s(ev.pass)}` : ''}</> };
     case 'strategist': {
       const parts: string[] = [];
       const pu = ev.priority_updates as unknown[]; const ab = ev.abandoned as unknown[];
@@ -93,21 +93,21 @@ export function describeEvent(ev: RawEvent): Row | null {
     }
     case 'resource_verdict': {
       const useful = ev.verdict === 'useful';
-      return { icon: useful ? '✓' : '✗', tone: useful ? 'text-emerald-400' : 'text-red-400', body: <>{useful ? 'useful' : 'reject'} <span className="text-zinc-500">{clip(s(ev.url).replace(/^https?:\/\//, ''), 60)}</span>{ev.reason ? ` — ${clip(ev.reason, 100)}` : ''}</> };
+      return { icon: useful ? '✓' : '✗', tone: useful ? 'text-emerald-400' : 'text-red-400', body: <>{useful ? 'useful' : 'reject'} <span className="text-zinc-500">{clip(s(ev.url).replace(/^https?:\/\//, ''), 60)}</span>{ev.reason ? `: ${clip(ev.reason, 100)}` : ''}</> };
     }
     case 'page_verdict': {
       const on = ev.verdict === 'on_topic';
       return { icon: on ? '●' : '⚠', tone: on ? 'text-emerald-400' : 'text-red-400', body: <>page {s(ev.verdict)} <span className="text-zinc-500">{clip(s(ev.url).replace(/^https?:\/\//, ''), 60)}</span></> };
     }
     case 'stage_collapse':
-      return { icon: '🛑', tone: 'text-red-400 font-medium', body: <>{s(ev.agent || 'stage')} output collapsed — {s(ev.signal)}</> };
+      return { icon: '🛑', tone: 'text-red-400 font-medium', body: <>{s(ev.agent || 'stage')} output collapsed: {s(ev.signal)}</> };
     case 'grounding': {
       const tone = { high: 'text-emerald-400', medium: 'text-yellow-400', low: 'text-orange-400', very_low: 'text-red-400' }[s(ev.confidence_tier)] || 'text-zinc-400';
       return { icon: '●', tone: `${tone} font-semibold`, body: `Grounding: ${s(ev.confidence_tier).toUpperCase()} (score ${s(ev.confidence_score)})` };
     }
     case 'done':
       return ev.status === 'complete'
-        ? { icon: '✓', tone: 'text-emerald-400 font-medium', body: 'Pipeline complete — report ready.' }
+        ? { icon: '✓', tone: 'text-emerald-400 font-medium', body: 'Pipeline complete: report ready.' }
         : { icon: '✗', tone: 'text-red-400 font-medium', body: `Pipeline failed: ${clip(ev.result || 'Unknown error', 200)}` };
     default:
       return ev.message || ev.content ? { icon: '·', tone: 'text-zinc-400', body: clip(ev.message || ev.content, 300) } : null;

@@ -27,7 +27,7 @@ export const TOUR_MANIFEST: TourSegment[] = [
       {
         tourId: 'dr-main',
         title: 'Ask, then watch it work',
-        body: 'Enter a research question and Start, or use “Clarify first” to answer a couple of focusing questions. As it runs you’ll see a live stream of searches, reads, notes, and reasoning, a stage pipeline, artifact tabs (Plan / Notes / Draft / Sources / Thoughts / Mind Map), and the final cited report. Past reports (searchable, exportable to PDF/DOCX) are in the sidebar.',
+        body: 'Enter a research question, pick a depth, and hit Start. As it runs you’ll see a live stream of searches, reads, notes, and reasoning, a stage pipeline, artifact tabs (Plan / Notes / Draft / Sources / Thoughts / Mind Map), and the final cited report. Past reports (searchable, exportable to PDF/DOCX) are in the sidebar.',
         side: 'top',
         align: 'center',
       },

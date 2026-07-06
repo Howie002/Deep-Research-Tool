@@ -466,3 +466,15 @@ The CrewAI multi-agent backend + SSE streaming are unchanged; the UI moved.
 - NOTE: live research runs remain gated on the Death Star CUDA blocker (model
   crash-loops); the migrated UI + SSE transport are verified and ready.
 Commits: migration `b0da63e`, proxyTimeout `4d34475`.
+
+---
+
+## 2026-07-06 — Simplified run controls (Andrew's pre-use review)
+- UI now exposes **only the Depth toggle (Light/Medium/Heavy)**. Removed from the
+  frontend: the **Ultra** depth option, the **Thorough mode** checkbox, and the
+  **Clarify first** button + modal (`ClarifyModal.tsx` deleted; `clarify()` and the
+  `thorough`/`clarifications` fields dropped from the API client).
+- Backend unchanged: `/clarify` and the `ultra`/`thorough` params still exist and
+  work (run.py CLI can still use them); the UI just never sends them.
+- Em-dash pass over all user-facing strings (header blurb, layout metadata,
+  feedback toast, live-stream rows, tour copy) per the fleet style rule.

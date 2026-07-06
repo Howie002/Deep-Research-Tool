@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
-import { Play, Square, Settings as SettingsIcon, Sparkles } from 'lucide-react';
-import { createJob, cancelJob, streamUrl, clarify } from '@/lib/api';
+import { Play, Square, Settings as SettingsIcon } from 'lucide-react';
+import { createJob, cancelJob, streamUrl } from '@/lib/api';
 import { describeEvent, ts, STAGES, type RawEvent } from '@/lib/events';
 import MindMap, { type MMNode, type MMLink } from '@/components/research/MindMap';
-import ClarifyModal, { type ClarifyQ } from '@/components/research/ClarifyModal';
 import SettingsModal from '@/components/research/SettingsModal';
 import ReportsHistory from '@/components/research/ReportsHistory';
 
@@ -14,8 +13,7 @@ type ArtTab = 'plan' | 'notes' | 'draft' | 'sources' | 'thoughts' | 'mindmap';
 
 export default function Page() {
   const [query, setQuery] = useState('');
-  const [depth, setDepth] = useState<'light' | 'medium' | 'heavy' | 'ultra'>('medium');
-  const [thorough, setThorough] = useState(false);
+  const [depth, setDepth] = useState<'light' | 'medium' | 'heavy'>('medium');
   const [running, setRunning] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [rows, setRows] = useState<{ icon: string; tone: string; body: React.ReactNode; t: string }[]>([]);
@@ -29,7 +27,6 @@ export default function Page() {
   const [thoughts, setThoughts] = useState<{ label: string; rationale?: string }[]>([]);
   const [mmNodes, setMmNodes] = useState<MMNode[]>([]);
   const [mmLinks, setMmLinks] = useState<MMLink[]>([]);
-  const [clarifyQs, setClarifyQs] = useState<ClarifyQ[] | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [reportsKey, setReportsKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -101,24 +98,15 @@ export default function Page() {
     es.onerror = () => { /* keep open; backend closes on done */ };
   };
 
-  const begin = async (clarifications?: string) => {
+  const begin = async () => {
     if (!query.trim()) { setError('Enter a research question.'); return; }
     setError(null); reset(); setRunning(true);
     setMmNodes([{ id: 'root', label: query.trim().slice(0, 48), kind: 'root' }]);
     try {
-      const { job_id } = await createJob({ query: query.trim(), clarifications, depth, thorough });
+      const { job_id } = await createJob({ query: query.trim(), depth });
       setJobId(job_id);
       startStream(job_id);
     } catch (e) { setError((e as Error).message); setRunning(false); }
-  };
-
-  const startWithClarify = async () => {
-    if (!query.trim()) { setError('Enter a research question.'); return; }
-    try {
-      const { questions } = await clarify(query.trim());
-      if (questions?.length) setClarifyQs(questions);
-      else begin();
-    } catch { begin(); }
   };
 
   const stop = async () => {
@@ -140,7 +128,7 @@ export default function Page() {
       <header className="flex items-start justify-between gap-3 mb-6">
         <div>
           <h1 className="text-xl font-bold text-[#500000] dark:text-[#e0a3a3]">Deep Research Agent</h1>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">Multi-agent research on Foundation local inference — plan, search, read, synthesize, and cite.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">Multi-agent research on Foundation local inference: plan, search, read, synthesize, and cite.</p>
         </div>
         <button onClick={() => setShowSettings(true)} className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-[#500000] dark:hover:text-[#e0a3a3]">
           <SettingsIcon size={16} /> Settings
@@ -163,12 +151,8 @@ export default function Page() {
               <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
                 Depth
                 <select value={depth} onChange={(e) => setDepth(e.target.value as typeof depth)} disabled={running} className="border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 rounded px-2 py-1 text-sm">
-                  <option value="light">Light</option><option value="medium">Medium</option><option value="heavy">Heavy</option><option value="ultra">Ultra</option>
+                  <option value="light">Light</option><option value="medium">Medium</option><option value="heavy">Heavy</option>
                 </select>
-              </label>
-              <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-                <input type="checkbox" checked={thorough} onChange={(e) => setThorough(e.target.checked)} disabled={running} className="rounded border-zinc-300 text-[#500000] focus:ring-[#500000]" />
-                Thorough mode
               </label>
               <div className="flex-1" />
               {running ? (
@@ -176,14 +160,9 @@ export default function Page() {
                   <Square size={14} /> Cancel
                 </button>
               ) : (
-                <>
-                  <button onClick={startWithClarify} className="flex items-center gap-1.5 border border-[#500000] text-[#500000] dark:text-[#e0a3a3] dark:border-[#e0a3a3] font-semibold px-4 py-2 rounded-lg text-sm">
-                    <Sparkles size={14} /> Clarify first
-                  </button>
-                  <button onClick={() => begin()} className="flex items-center gap-1.5 bg-[#500000] hover:bg-[#3c001c] text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors">
-                    <Play size={14} /> Start research
-                  </button>
-                </>
+                <button onClick={() => begin()} className="flex items-center gap-1.5 bg-[#500000] hover:bg-[#3c001c] text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors">
+                  <Play size={14} /> Start research
+                </button>
               )}
             </div>
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -233,7 +212,7 @@ export default function Page() {
                 {artTab === 'draft' && <pre className="whitespace-pre-wrap text-zinc-700 dark:text-zinc-300 text-xs leading-relaxed">{draft || 'No draft yet.'}</pre>}
                 {artTab === 'notes' && (notes.length ? <ul className="space-y-1.5 list-disc pl-4 text-zinc-700 dark:text-zinc-300">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul> : <p className="text-zinc-400">No notes yet.</p>)}
                 {artTab === 'sources' && (sources.length ? <ul className="space-y-1">{sources.map((s, i) => <li key={i}><a href={s.url} target="_blank" rel="noreferrer" className="text-sky-500 hover:underline text-xs break-all">{s.title || s.url}</a></li>)}</ul> : <p className="text-zinc-400">No sources yet.</p>)}
-                {artTab === 'thoughts' && (thoughts.length ? <ul className="space-y-1.5 text-zinc-700 dark:text-zinc-300">{thoughts.map((t, i) => <li key={i}><span className="font-medium text-purple-500">🧠 {t.label}</span>{t.rationale ? <span className="text-zinc-500 italic"> — {t.rationale}</span> : null}</li>)}</ul> : <p className="text-zinc-400">No thoughts yet.</p>)}
+                {artTab === 'thoughts' && (thoughts.length ? <ul className="space-y-1.5 text-zinc-700 dark:text-zinc-300">{thoughts.map((t, i) => <li key={i}><span className="font-medium text-purple-500">🧠 {t.label}</span>{t.rationale ? <span className="text-zinc-500 italic">: {t.rationale}</span> : null}</li>)}</ul> : <p className="text-zinc-400">No thoughts yet.</p>)}
                 {artTab === 'mindmap' && <MindMap nodes={mmNodes} links={mmLinks} />}
               </div>
             </div>
@@ -255,13 +234,6 @@ export default function Page() {
         </aside>
       </div>
 
-      {clarifyQs && (
-        <ClarifyModal
-          questions={clarifyQs}
-          onSubmit={(c) => { setClarifyQs(null); begin(c); }}
-          onSkip={() => { setClarifyQs(null); begin(); }}
-        />
-      )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );

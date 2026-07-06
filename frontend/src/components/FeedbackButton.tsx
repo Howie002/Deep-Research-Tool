@@ -86,7 +86,7 @@ export default function FeedbackButton() {
             {sent ? (
               <div className="px-5 py-8 text-center space-y-3">
                 <MessageSquarePlus size={28} className="mx-auto text-[#500000]" />
-                <p className="text-sm text-[#1A1A1A]">Thanks — your feedback was recorded.</p>
+                <p className="text-sm text-[#1A1A1A]">Thanks, your feedback was recorded.</p>
                 <div className="flex justify-center pt-1">
                   <button
                     onClick={() => setOpen(false)}
