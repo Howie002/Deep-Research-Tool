@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { Play, Square, Settings as SettingsIcon } from 'lucide-react';
-import { createJob, cancelJob, streamUrl } from '@/lib/api';
+import { createJob, cancelJob, streamUrl, listReports, getReport } from '@/lib/api';
 import { describeEvent, ts, STAGES, type RawEvent } from '@/lib/events';
 import MindMap, { type MMNode, type MMLink } from '@/components/research/MindMap';
 import SettingsModal from '@/components/research/SettingsModal';
@@ -32,10 +32,12 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
   const lastSearch = useRef<string | null>(null);
 
   useEffect(() => () => esRef.current?.close(), []);
   useEffect(() => { feedRef.current?.scrollTo(0, feedRef.current.scrollHeight); }, [rows]);
+  useEffect(() => { if (report && !running) reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, [report, running]);
 
   const reset = () => {
     setRows([]); setStage(0); setReport(null); setPlan(''); setDraft('');
@@ -85,8 +87,24 @@ export default function Page() {
     }
     if (type === 'done') {
       setRunning(false);
-      if (ev.status === 'complete' && ev.result) { setReport(String(ev.result)); setReportsKey((k) => k + 1); }
-      else if (ev.status !== 'complete') setError(String(ev.result || 'The pipeline encountered an error.'));
+      if (ev.status === 'complete') {
+        setReportsKey((k) => k + 1);
+        if (ev.result) setReport(String(ev.result));
+        else {
+          // The backend saves the report even when the done event loses its
+          // payload (e.g. fallback close paths) — recover it from the store.
+          (async () => {
+            try {
+              const d = await listReports(1, 1);
+              const latest = d.reports?.[0]?.filename;
+              if (latest) {
+                const r = await getReport(latest);
+                if (r.content) setReport(String(r.content));
+              }
+            } catch { /* sidebar still lists it */ }
+          })();
+        }
+      } else setError(String(ev.result || 'The pipeline encountered an error.'));
       esRef.current?.close();
     }
   }, [notes.length, thoughts.length]);
@@ -220,7 +238,7 @@ export default function Page() {
 
           {/* Final report */}
           {report && (
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
+            <div ref={reportRef} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 shadow-sm">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-3">Research report</h3>
               <div className="prose prose-sm dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: reportHtml }} />
             </div>

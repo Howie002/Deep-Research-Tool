@@ -478,3 +478,17 @@ Commits: migration `b0da63e`, proxyTimeout `4d34475`.
   work (run.py CLI can still use them); the UI just never sends them.
 - Em-dash pass over all user-facing strings (header blurb, layout metadata,
   feedback toast, live-stream rows, tour copy) per the fleet style rule.
+
+## 2026-07-06 — First live-run verification + report-display hardening
+- **First live run verified end-to-end** (post-CUDA-fix): two real runs on the
+  Death Star (117s medium, ~3min light), real web sources fetched, cited reports
+  saved and listed. SSE stream captured via curl: all ~20 event types + a `done`
+  event carrying the full report payload arrived intact on the direct path.
+- **Bug (Andrew's first run):** the browser's `done` event arrived without the
+  report payload, so the UI said "report ready" but rendered nothing (report WAS
+  saved server-side). Direct-path capture shows backend + Next rewrite are sound;
+  the loss was in the browser-side proxy chain or a transient race. Frontend now
+  self-heals: on payload-less completion it fetches the newest saved report from
+  the store; the Recent-reports sidebar refreshes on every completion; and the
+  report card scrolls into view when it renders (it used to appear silently
+  below the long live-feed).
