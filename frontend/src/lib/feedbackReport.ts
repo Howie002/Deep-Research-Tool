@@ -17,6 +17,8 @@ export interface FeedbackReport {
   userId?: string | null;
   userEmail?: string | null;
   comment: string;
+  /** Optional data-URL screenshot (image/jpeg or image/png), pre-validated by the route. */
+  screenshot?: string | null;
 }
 
 export async function reportFeedbackToDashboard(f: FeedbackReport): Promise<boolean> {
@@ -27,6 +29,7 @@ export async function reportFeedbackToDashboard(f: FeedbackReport): Promise<bool
     userEmail: f.userEmail ?? null,
     rating: 'note',
     comment: f.comment ?? '',
+    ...(f.screenshot ? { screenshot: f.screenshot } : {}),
   });
   const sig = createHmac('sha256', SECRET).update(body).digest('hex');
 
