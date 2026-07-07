@@ -479,6 +479,20 @@ Commits: migration `b0da63e`, proxyTimeout `4d34475`.
 - Em-dash pass over all user-facing strings (header blurb, layout metadata,
   feedback toast, live-stream rows, tour copy) per the fleet style rule.
 
+## 2026-07-07 — Browser-proxy-path run verified (the 07-06 gap closed)
+- Third live run (medium depth, endowment spending-rate + Texas UPMIFA query)
+  executed entirely through the browser's transport chain: job created and SSE
+  streamed via the Next.js rewrite on :3015 (`/DeepResearch/api/...`), not the
+  direct backend. 222 events arrived over ~9 min (530s) and the `done` event
+  carried the FULL report payload in `result` — the 07-06 payload-loss bug did
+  not reproduce; the self-heal fetch (2e75794) remains as belt-and-braces.
+- Report quality spot-checked: ~3k words, real citations (NACUBO FY25 release,
+  Texas Property Code ch. 117 statute text, ERIC), grounding audit visibly
+  stripping unverifiable URLs. Telemetry: 51 research LLM calls + 1 reflection
+  logged to the dashboard under deep-research-agent.
+- Still untested by a human: the actual browser render (EventSource + React).
+  Transport is proven; one click in Edge closes it completely.
+
 ## 2026-07-06 — First live-run verification + report-display hardening
 - **First live run verified end-to-end** (post-CUDA-fix): two real runs on the
   Death Star (117s medium, ~3min light), real web sources fetched, cited reports
