@@ -378,6 +378,34 @@ def _strip_ghost_urls(prose: str, allowed_urls: set[str]) -> tuple[str, list[str
     return cleaned, list(set(stripped))
 
 
+def _trim_degenerate_tail(text: str, max_run_chars: int = 400) -> tuple[str, bool]:
+    """Cut runaway generation off synthesized prose (deterministic watchdog).
+
+    Failure mode (seen live 2026-07-07): near the end of a long synthesis the
+    model collapses into a repetition/word-salad loop and burns tokens until
+    max_tokens cuts it mid-word — hundreds of words with no sentence
+    punctuation. The repetition-penalty knobs don't reliably survive the
+    LiteLLM hop, so guard mechanically: healthy prose never runs
+    `max_run_chars` characters without a sentence terminator or line break.
+    On detection, truncate at the last healthy boundary.
+    Returns (text, was_trimmed).
+    """
+    if not text:
+        return text, False
+    last_ok = -1  # index of the last terminator seen
+    for i, ch in enumerate(text):
+        if ch in ".!?\n":
+            last_ok = i
+        elif i - last_ok > max_run_chars:
+            kept = text[: last_ok + 1].rstrip()
+            # If the cut left a bare section header dangling, give it a body.
+            last_line = kept.split("\n")[-1] if kept else ""
+            if re.match(r"^\s*#{2,3}\s+\S", last_line):
+                kept += "\n\n_This section could not be completed within the run budget._"
+            return kept, True
+    return text, False
+
+
 def _trim_prose_scaffolding(raw: str) -> str:
     """Strip chain-of-thought / planning scaffolding the model emits before
     the actual brief.
@@ -433,6 +461,9 @@ def synthesize_prose(cm: ClaimsModel, llm) -> tuple[str, list[str]]:
         return "", []
     # Strip any scaffolding the model leaked before the actual brief.
     trimmed = _trim_prose_scaffolding(raw)
+    trimmed, degenerate = _trim_degenerate_tail(trimmed)
+    if degenerate:
+        print("[synthesis] degenerate tail detected; trimmed runaway prose", flush=True)
     cleaned, stripped = _strip_ghost_urls(trimmed, allowed_urls)
     return cleaned, stripped
 

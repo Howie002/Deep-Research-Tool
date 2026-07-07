@@ -479,6 +479,21 @@ Commits: migration `b0da63e`, proxyTimeout `4d34475`.
 - Em-dash pass over all user-facing strings (header blurb, layout metadata,
   feedback toast, live-stream rows, tour copy) per the fleet style rule.
 
+## 2026-07-07 — Degeneration watchdog on prose synthesis
+- Dominic caught the browser-path run's "What Remains Open" section devolving
+  into a 7.6k-char repetition/word-salad loop (gemma collapsed near the end of
+  the 2400-token synthesis; the repetition-penalty params in the payload are
+  silently dropped at the LiteLLM hop, so only frequency_penalty survives).
+- Fix is deterministic, per the fleet "the cap IS the watchdog" lesson:
+  `_trim_degenerate_tail()` in adaptive_worker.py truncates any run longer
+  than 400 chars with no sentence terminator or newline at the last healthy
+  boundary (a dangling section header gets a stock "could not be completed"
+  body). Wired into synthesize_prose after the scaffolding trim.
+- Verified: the guard trims the real corrupted report (12.4k -> 4.8k chars,
+  saved file repaired) while leaving healthy prose byte-identical, and a fresh
+  light-depth live run (federal endowment excise tax post-2025) produced a
+  clean 1.1k-word report, longest terminator-free run 225 chars.
+
 ## 2026-07-07 — Browser-proxy-path run verified (the 07-06 gap closed)
 - Third live run (medium depth, endowment spending-rate + Texas UPMIFA query)
   executed entirely through the browser's transport chain: job created and SSE
