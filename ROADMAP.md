@@ -505,8 +505,11 @@ Commits: migration `b0da63e`, proxyTimeout `4d34475`.
   Texas Property Code ch. 117 statute text, ERIC), grounding audit visibly
   stripping unverifiable URLs. Telemetry: 51 research LLM calls + 1 reflection
   logged to the dashboard under deep-research-agent.
-- Still untested by a human: the actual browser render (EventSource + React).
-  Transport is proven; one click in Edge closes it completely.
+- CLOSED same day: Dominic ran a real browser session at HEAVY depth (first
+  heavy-preset run) — the report card rendered on completion and the
+  "What Remains Open" section came out as normal prose (degeneration guard
+  path healthy at the largest synthesis size yet). Browser path fully
+  verified end to end; nothing about the live-run pipeline remains untested.
 
 ## 2026-07-06 — First live-run verification + report-display hardening
 - **First live run verified end-to-end** (post-CUDA-fix): two real runs on the
