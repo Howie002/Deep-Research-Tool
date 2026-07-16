@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquarePlus, X, Camera, LoaderCircle } from 'lucide-react';
 
+import { createPortal } from 'react-dom';
 const BASE = '/DeepResearch';
 
 // Keep the compressed screenshot comfortably under the ~1MB proxy body cap.
@@ -158,6 +159,9 @@ function CropOverlay({
  */
 export default function FeedbackButton() {
   const [open, setOpen] = useState(false);
+  // Portal mount gate: document.body only exists client-side.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -221,18 +225,20 @@ export default function FeedbackButton() {
     setSending(false);
   };
 
-  return (
+  if (!mounted) return null;
+  return createPortal(
     <>
+      {/* Floating feedback trigger: fixed bottom-right so it is reachable on
+          every page without scrolling, and rendered through a portal so a
+          transformed/collapsed sidebar ancestor can't reposition it. */}
       <button
         type="button"
         onClick={() => setOpen(true)}
         title="Send feedback to the AI team"
-        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors duration-150 text-white/70 hover:bg-white/10 hover:text-white"
+        aria-label="Send feedback"
+        className="fixed bottom-5 right-5 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-[#500000] text-white shadow-lg shadow-black/30 ring-1 ring-white/25 hover:bg-[#3c001c] hover:scale-105 transition-all duration-150"
       >
-        <MessageSquarePlus size={20} className="shrink-0" strokeWidth={1.75} />
-        <span className="text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          Feedback
-        </span>
+        <MessageSquarePlus size={21} strokeWidth={1.9} />
       </button>
 
       {frame && <CropOverlay frame={frame} onDone={onCrop} onCancel={onCropCancel} />}
@@ -339,6 +345,7 @@ export default function FeedbackButton() {
           </div>
         </div>
       )}
-    </>
+    </>,
+    document.body
   );
 }
