@@ -1,5 +1,7 @@
 # Deep Research Agent
 
+> **⚠️ STALE SNAPSHOT (pre-2026-05). Superseded — see the repo-root ROADMAP.md and the Second Brain 'Deep Research Tool' folder.** Production today: FastAPI :8765 + Next.js :3015 (/DeepResearch), Death Star nvfp4 gemma via LiteLLM :4000, DuckDuckGo search (settled), Light/Medium/Heavy depth toggle.
+
 ## Repository
 
 **Repo:** [Howie002/Deep-Research-Agent](https://github.com/Howie002/Deep-Research-Agent) (private)

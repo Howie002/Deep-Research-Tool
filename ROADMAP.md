@@ -14,8 +14,8 @@ mode alongside or in place of the linear pipeline. They should be
 treated as a coherent phase rather than individual tickets.
 
 ### Universal Surface (API / UI / MCP parity)
-- `[ ]` **Adaptive as the primary (or only) mode across every caller surface** — the same adaptive-loop run is reachable identically whether the caller is a human (UI), a REST client, or an MCP-using agent. No "it works via CLI but not via the API" gaps
-  - `[ ]` **`research_worker.main()` dispatches on job mode** (or, on dev2, simply runs adaptive) so POST /api/jobs and MCP `start_research` both trigger the adaptive loop with identical semantics and stream output
+- `[x]` **Adaptive as the primary (or only) mode across every caller surface** *(live engine since 07-02; verified 07-07)* — the same adaptive-loop run is reachable identically whether the caller is a human (UI), a REST client, or an MCP-using agent. No "it works via CLI but not via the API" gaps
+  - `[x]` **`research_worker.main()` dispatches on job mode** (or, on dev2, simply runs adaptive) so POST /api/jobs and MCP `start_research` both trigger the adaptive loop with identical semantics and stream output *(live engine since 07-02; verified 07-07)*
   - `[ ]` **`save_run` picks up `claims.json` alongside `grounding.json` / `fetched.jsonl`** so the artifacts directory is mode-agnostic — consumers can request any JSON artifact without branching on mode
   - `[ ]` **MCP `start_research` gains an optional `mode` parameter** (default: whatever this branch decides is default) so agents can explicitly select the adaptive path by name
   - `[ ]` **REST `JobCreateRequest` gains an optional `mode` field** for agent/REST-client parity with MCP
@@ -335,13 +335,7 @@ Surfaced by the first two adaptive test runs on Stephen Guetersloh:
   - Plan completeness is tracked in `meta.json` as `plan_checked_ratio` (checked items / total items); the evaluator flags runs where this is below 0.5 as "plan not maintained"
 
 ### SearXNG Integration (Self-Hosted Search)
-- `[ ]` Bundle or auto-launch a **SearXNG** instance as an optional local search backend — zero API keys, zero rate limits, fully private
-  - Add `searxng` as a selectable option in the Search Backend dropdown alongside DuckDuckGo / LangSearch / Brave / SerpAPI
-  - Settings UI: SearXNG instance URL field (default `http://localhost:8080`) with a status indicator showing whether the instance is reachable
-  - `tools.py`: new `SearXNGBackend` class — calls `{base_url}/search?q=…&format=json&categories=general` and maps results to the shared `SearchResult` schema
-  - Docker Compose snippet provided in README so users can spin up SearXNG with a single command alongside the research agent
-  - Optional: detect a running SearXNG instance automatically during endpoint discovery (same scan that finds LM Studio / Ollama)
-  - Optional: settings toggle to let SearXNG aggregate from specific engines (Google, Bing, Brave, etc.) without individual API keys
+**SETTLED 2026-07: SEARCH_BACKEND=duckduckgo is the production decision** — DDG resolves better than local SearXNG for this workload. Do not re-propose the flip. (Historical SearXNG exploration removed in the 2026-07-17 docs audit.)
 
 ### Headless Chromium Fetch (4th Fallback Strategy)
 - `[ ]` **Add Playwright headless Chromium as a 4th fetch fallback** — triggered only when trafilatura, requests+BeautifulSoup, and the Wayback Machine all return gated or empty content
