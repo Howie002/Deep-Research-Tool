@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageSquarePlus, X, Camera, LoaderCircle } from 'lucide-react';
+import { MessageSquarePlus, X, Camera, Monitor, LoaderCircle } from 'lucide-react';
 
 import { createPortal } from 'react-dom';
 const BASE = '/DeepResearch';
@@ -61,6 +61,16 @@ function cropAndCompress(
     out = canvas.toDataURL('image/jpeg', quality);
   }
   return out;
+}
+
+/** Compress the whole captured frame (no trim) to fit the size cap. */
+function compressFullFrame(png: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(cropAndCompress(img, 0, 0, img.naturalWidth, img.naturalHeight));
+    img.onerror = () => reject(new Error('frame decode failed'));
+    img.src = png;
+  });
 }
 
 /**
@@ -195,6 +205,20 @@ export default function FeedbackButton() {
     }
   };
 
+  // Full-screen variant: attach the whole captured frame, no trim step.
+  const captureFull = async () => {
+    if (capturing) return;
+    setError(null);
+    setCapturing(true); // hides the modal so it isn't in the shot
+    try {
+      const png = await captureTabFrame();
+      setShot(await compressFullFrame(png));
+    } catch {
+      setError('Screen capture was cancelled or blocked.');
+    }
+    setCapturing(false);
+  };
+
   const onCrop = useCallback((dataUrl: string) => {
     setShot(dataUrl);
     setFrame(null);
@@ -215,7 +239,11 @@ export default function FeedbackButton() {
       const res = await fetch(`${BASE}/api/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment: text, screenshot: shot ?? undefined }),
+        body: JSON.stringify({
+          comment: text,
+          screenshot: shot ?? undefined,
+          pageUrl: window.location.href,
+        }),
       });
       if (res.ok) setSent(true);
       else setError('Could not send feedback');
@@ -313,15 +341,28 @@ export default function FeedbackButton() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={capture}
-                      disabled={capturing}
-                      className="inline-flex items-center gap-2 text-xs text-[#500000] border border-[#D6D3C4] hover:border-[#500000] rounded-md px-3 py-2 transition-colors duration-150 disabled:opacity-50"
-                    >
-                      {capturing ? <LoaderCircle size={13} className="animate-spin" /> : <Camera size={13} />}
-                      Attach screenshot
-                    </button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={capture}
+                        disabled={capturing}
+                        className="inline-flex items-center gap-2 text-xs text-[#500000] border border-[#D6D3C4] hover:border-[#500000] rounded-md px-3 py-2 transition-colors duration-150 disabled:opacity-50"
+                      >
+                        {capturing ? <LoaderCircle size={13} className="animate-spin" /> : <Camera size={13} />}
+                        Capture and trim
+                      </button>
+                      <button
+                        onClick={captureFull}
+                        disabled={capturing}
+                        className="inline-flex items-center gap-2 text-xs text-[#500000] border border-[#D6D3C4] hover:border-[#500000] rounded-md px-3 py-2 transition-colors duration-150 disabled:opacity-50"
+                      >
+                        {capturing ? <LoaderCircle size={13} className="animate-spin" /> : <Monitor size={13} />}
+                        Capture full screen
+                      </button>
+                    </div>
                   )}
+                  <p className="text-[11px] text-[#909090]">
+                    Your current page link is included automatically.
+                  </p>
 
                   {error && <p className="text-xs text-[#B91C1C]">{error}</p>}
                 </div>

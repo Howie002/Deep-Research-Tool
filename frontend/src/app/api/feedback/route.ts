@@ -17,6 +17,7 @@ const SCREENSHOT_PREFIX = /^data:image\/(jpeg|png);base64,/;
 export async function POST(req: Request) {
   let comment = '';
   let screenshot: string | null = null;
+  let pageUrl: string | null = null;
   try {
     const body = await req.json();
     comment = typeof body?.comment === 'string' ? body.comment.trim() : '';
@@ -28,6 +29,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Screenshot too large' }, { status: 413 });
       }
       screenshot = body.screenshot;
+    }
+    if (typeof body?.pageUrl === 'string' && body.pageUrl.trim()) {
+      pageUrl = body.pageUrl.trim().slice(0, 2000);
     }
   } catch {
     return NextResponse.json({ error: 'Bad request' }, { status: 400 });
@@ -41,6 +45,7 @@ export async function POST(req: Request) {
     userEmail: req.headers.get('x-foundation-email'),
     comment: comment.slice(0, 4000),
     screenshot,
+    pageUrl,
   });
 
   if (!ok) {
