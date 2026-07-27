@@ -33,7 +33,7 @@ from typing import Callable, Optional
 from claims import Claim, ClaimsModel, ClaimStatus, Evidence, preset_budget
 from config import LM_STUDIO_API_KEY, LM_STUDIO_BASE_URL, LM_STUDIO_MODEL
 from telemetry_report import report_from_response, report_usage
-from adaptive_planner import decompose_query, next_action, strategic_replan
+from adaptive_planner import _scope, decompose_query, next_action, strategic_replan
 from adaptive_evaluator import apply_evaluation, evaluate_result, integrate_result
 
 
@@ -456,7 +456,7 @@ def synthesize_prose(cm: ClaimsModel, llm) -> tuple[str, list[str]]:
           "write any preamble, planning notes, scaffolding, or self-correction "
           "before the report itself. Markdown only — no JSON, no code blocks."
     )
-    raw = llm(_PROSE_SYSTEM, user_prompt, max_tokens=2400)
+    raw = llm(_scope(_PROSE_SYSTEM), user_prompt, max_tokens=2400)
     if not raw or len(raw.strip()) < 200:
         return "", []
     # Strip any scaffolding the model leaked before the actual brief.

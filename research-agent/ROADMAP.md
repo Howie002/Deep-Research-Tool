@@ -19,6 +19,7 @@
 - [x] Grounding validator + pipeline hardening
 - [x] Made adaptive the only mode (linear pipeline preserved but deferred)
 - [x] Strategist turn — meta-loop reflection, corroboration awareness, persistence
+- [x] **Texas A&M near-exclusive scope for researcher queries** (2026-07-27, Dr. G feedback) — `FOUNDATION_SCOPE_*` in `config.py`, prepended to the decompose / next-action / strategist / prose prompts. Any query about researchers / experts / faculty / labs / programs now reports Texas A&M people **near-exclusively** (not a national list); non-TAMU names allowed only as incidental context. Narrow exceptions: user explicitly names another institution / asks for a national comparison, or a donor-prospect brief on an external subject (not a researcher query). Toggle `FOUNDATION_SCOPE_ENABLED=0`. Verified by decompose A/B on the cluster model: nutrition query 5/5 TAMU (0/5 scope-off), bare space-researcher query 5/5, Lowry Mays donor profile 1/6 (correctly not hijacked).
 - [x] Prose synthesizer for more readable output
 - [x] Evaluator quality improvements
 - [x] Sidebar repopulation, run delete, home button

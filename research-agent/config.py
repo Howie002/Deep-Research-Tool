@@ -55,3 +55,44 @@ from depth_presets import DEPTH_PRESETS, DEFAULT_DEPTH  # re-export
 # for depth=ultra; opt-in otherwise. Read via env so the subprocess
 # worker can flip it per-job.
 THOROUGH_MODE: bool = os.getenv("THOROUGH_MODE", "0") in ("1", "true", "True", "yes")
+
+# ── Foundation research scope ────────────────────────────────────────────────
+# This tool is operated by the Texas A&M Foundation. Per Dr. G (2026-07-27), any
+# query about RESEARCHERS should report Texas A&M people ~exclusively — a
+# nutrition-researcher search had returned only non-TAMU names because no
+# institution was stated and the tool went national. So this is a NEAR-EXCLUSIVE
+# scope, not a soft default: when a query involves finding/reporting researchers,
+# experts, faculty, labs, or programs, the people REPORTED must be Texas A&M.
+# The only carve-outs are (a) the user explicitly names another institution / asks
+# for a national comparison, and (b) donor-prospect research on an external named
+# subject (which is not a researcher query at all). Off via FOUNDATION_SCOPE_ENABLED=0.
+FOUNDATION_SCOPE_ENABLED: bool = os.getenv("FOUNDATION_SCOPE_ENABLED", "1") in ("1", "true", "True", "yes")
+FOUNDATION_INSTITUTION: str = os.getenv(
+    "FOUNDATION_INSTITUTION", "Texas A&M University (the flagship main campus in College Station)"
+)
+_FOUNDATION_SCOPE_TEXT = (
+    "MISSION CONTEXT — this research assistant is operated by the Texas A&M "
+    f"Foundation to support {FOUNDATION_INSTITUTION}. Its job is to surface Texas "
+    "A&M people and work, not a national field survey.\n"
+    "TEXAS A&M SCOPE (near-exclusive): whenever the query involves finding, "
+    "identifying, recommending, or reporting on researchers, experts, faculty, "
+    "scientists, labs, centers, or programs, the researchers and work you REPORT "
+    f"must be at {FOUNDATION_INSTITUTION} — essentially exclusively. Scope every "
+    "claim and search query to Texas A&M, prefer tamu.edu and official Texas A&M "
+    "sources, and name only Texas A&M people/programs as the answer. Do NOT "
+    "present non-Texas-A&M researchers as recommendations or as the result, even "
+    "if they are more prominent in the field. A non-Texas-A&M name may appear "
+    "ONLY as incidental context (e.g. a named external collaborator on a Texas "
+    "A&M project), never as a recommended researcher. If few Texas A&M "
+    "researchers are found, report those and note the gap rather than padding "
+    "with outside names.\n"
+    "NARROW EXCEPTIONS — only when: (a) the user EXPLICITLY names a different "
+    "institution or explicitly asks for a national / cross-institution "
+    "comparison (then honor exactly what they asked); or (b) the query's subject "
+    "is a specific external individual, company, donor, or foundation being "
+    "profiled (a donor-prospect brief, e.g. a businessperson or a grantmaking "
+    "foundation) — that is NOT a researcher-finding query, so research the named "
+    "subject directly and do not force a Texas A&M scope onto them. In every "
+    "other case, stay on Texas A&M.\n\n"
+)
+FOUNDATION_SCOPE_PREAMBLE: str = _FOUNDATION_SCOPE_TEXT if FOUNDATION_SCOPE_ENABLED else ""

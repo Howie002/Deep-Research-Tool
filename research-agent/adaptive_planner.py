@@ -24,6 +24,15 @@ LLMFn = Callable[[str, str], Optional[str]]
 #   (system: str, user: str) -> content: str | None
 
 
+def _scope(system_prompt: str) -> str:
+    """Prepend the Texas A&M Foundation default-scope directive to a system
+    prompt. Config-driven (FOUNDATION_SCOPE_ENABLED) and imported lazily so this
+    never perturbs config's module-load ordering (see config.py's depth-preset
+    note). No-op when the scope is disabled."""
+    from config import FOUNDATION_SCOPE_PREAMBLE
+    return FOUNDATION_SCOPE_PREAMBLE + system_prompt
+
+
 # ── Prompt fragments ──────────────────────────────────────────────────────────
 
 
@@ -221,7 +230,7 @@ def decompose_query(query: str, llm: LLMFn, clarifications: str = "") -> list[di
     On any LLM/parse failure returns an empty list — the caller can fall
     back to a single generic claim like 'answer the user's query'.
     """
-    raw = llm(_DECOMPOSE_SYSTEM, _decompose_user_prompt(query, clarifications))
+    raw = llm(_scope(_DECOMPOSE_SYSTEM), _decompose_user_prompt(query, clarifications))
     parsed = _parse_json(raw or "")
     if not isinstance(parsed, dict):
         return []
@@ -257,7 +266,7 @@ def next_action(
     surfaced by recent searches that have not yet been fetched. Makes it
     possible for the planner to propose `fetch` actions at all.
     """
-    raw = llm(_NEXT_ACTION_SYSTEM, _next_action_user_prompt(cm, available_urls, clarifications))
+    raw = llm(_scope(_NEXT_ACTION_SYSTEM), _next_action_user_prompt(cm, available_urls, clarifications))
     parsed = _parse_json(raw or "")
 
     if isinstance(parsed, dict):
@@ -431,7 +440,7 @@ def strategic_replan(
             f"{clarifications.strip()}\n\n"
             + user
         )
-    raw = llm(_STRATEGIST_SYSTEM, user)
+    raw = llm(_scope(_STRATEGIST_SYSTEM), user)
     parsed = _parse_json(raw or "")
 
     out: dict = {
