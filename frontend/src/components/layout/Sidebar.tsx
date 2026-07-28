@@ -13,7 +13,7 @@ export default function Sidebar() {
   const isHome = pathname === '/';
 
   return (
-    <aside className="group flex flex-col w-16 hover:w-[220px] transition-all duration-200 ease-in-out bg-[#500000] border-r border-[#3c001c] min-h-screen overflow-hidden shrink-0">
+    <aside data-nav-rail className="group flex flex-col w-16 hover:w-[220px] transition-all duration-200 ease-in-out bg-[#500000] border-r border-[#3c001c] min-h-screen overflow-hidden shrink-0">
       <div className="flex items-center h-14 px-3 border-b border-[#3c001c] bg-[#3c001c] shrink-0">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={`${BASE}/tamu-foundation-logo.png`} alt="Texas A&M Foundation" className="h-10 w-10 object-contain shrink-0" />
