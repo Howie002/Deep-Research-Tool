@@ -1,5 +1,19 @@
 # Deep Research Tool - Notes
 
+## 2026-07-29 (Wednesday, later) - Telemetry: reflection now attributes to the job submitter; the NULL-user mystery decomposed
+
+Repo `Deep-Research-Tool` `fd7e65d`, `dev2`; companion LC fix `718ec15`. Backend restarted surgically (kill + relaunch `run.py api` on 127.0.0.1:8765; the :3015 frontend was never touched).
+
+**The starting number - 658 of 930 llm_usage rows had a NULL user - was not one bug.** The attribution chain (submission headers -> job file -> worker `set_user()` -> shim) has existed and worked since 06-25 (`fc7a935`); whole jobs attribute or don't, depending on how they were submitted. Decomposed by feature and by day:
+
+1. **`learning` (27/27 NULL) - ours, fixed.** Reflection runs in the *API process* via `_trigger_reflection`'s daemon thread, and `set_user` is only ever called in the worker subprocess, so the process-global user was always unset there. The clarify endpoint already attributed explicitly from request headers for exactly this reason; reflection never got the same treatment. Fix: explicit `user_id`/`user_email` kwargs threaded `report_from_response` -> `_call_llm` -> `run_reflection` -> all three `_trigger_reflection` call sites (each already holds the job dict).
+2. **`research` NULLs from Living Catalog dispatch - upstream, fixed in LC.** LC's research-queue dispatch POSTs to `/api/jobs` server-to-server with no identity headers - 246 of the 07-08 college-run rows alone. LC now forwards `x-foundation-user`/`email` from whoever clicked Dispatch (`718ec15`).
+3. **`research` NULLs from headerless/curl submissions (e.g. the 07-27 TAMU-scope A/B, 97 rows) - left NULL deliberately.** No user existed; inventing one would be worse than honest NULLs.
+
+**Verified end to end, not asserted:** submitted a light-depth job with `x-foundation-*` headers -> job file carried `user_id`/`user_email` -> worker `research` rows attributed -> the completion poll (the exact patched path) fired reflection with the submitter attached.
+
+**Side-finding for later:** DR's API-key gate (`API_KEY=` empty -> `verify_api_key` no-ops) is what lets LC POST un-keyed; if a key is ever set, LC's dispatch needs it too or college research silently 403s.
+
 ## 2026-07-29 (Wednesday) - Feedback #107 resolved as "hide the tile", NOT a move to Portfolio Strategy; registry ports corrected
 
 No code change in this repo. The change is in the dashboard registry (`foundation-ai-dashboard` `3b4f2d6`); recorded here because it determines who can reach this tool.
