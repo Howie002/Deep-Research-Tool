@@ -378,11 +378,18 @@ class MemoryUpdateRequest(BaseModel):
 # ── Background reflection worker ───────────────────────────────────────────
 
 
-def _trigger_reflection(prefix: str, query: str, no_learn: bool) -> None:
+def _trigger_reflection(prefix: str, query: str, no_learn: bool,
+                        user_id: str | None = None, user_email: str | None = None) -> None:
     """
     Spawn a daemon thread that calls run_reflection() after a run completes.
     The thread reads the saved artifacts from REPORTS_DIR/{prefix}/ so it
     must be called AFTER save_run() and BEFORE cleanup_job().
+
+    user_id/user_email = the job's submitter, for telemetry attribution only.
+    Reflection runs here in the API process, where the worker's process-global
+    telemetry user is never set — without the explicit pass-through, every
+    `learning` row lands with a NULL user (all 27 rows were NULL before
+    2026-07-29).
     """
     if no_learn:
         return
@@ -408,6 +415,8 @@ def _trigger_reflection(prefix: str, query: str, no_learn: bool) -> None:
                 meta=meta,
                 store_path=LEARNING_STORE_PATH,
                 source_run=prefix,
+                user_id=user_id,
+                user_email=user_email,
             )
         except Exception:
             pass
@@ -591,7 +600,8 @@ async def get_job(job_id: str, log_offset: int = 0) -> JobStatusResponse:
                       status="complete",
                       started_at=data.get("started_at", ""))
     if prefix:
-        _trigger_reflection(prefix, query, data.get("no_learn", False))
+        _trigger_reflection(prefix, query, data.get("no_learn", False),
+                            user_id=data.get("user_id"), user_email=data.get("user_email"))
     rebuild_index(REPORTS_DIR)
     cleanup_job(job_id, JOBS_DIR)
     return JobStatusResponse(status="complete", log=new_log, new_offset=new_offset, result=result, query=query)
@@ -655,7 +665,8 @@ async def stream_job(job_id: str) -> StreamingResponse:
                                                        status="complete",
                                                        started_at=jdata.get("started_at", ""))
                                         if pfx:
-                                            _trigger_reflection(pfx, jdata.get("query", ""), jdata.get("no_learn", False))
+                                            _trigger_reflection(pfx, jdata.get("query", ""), jdata.get("no_learn", False),
+                                                                user_id=jdata.get("user_id"), user_email=jdata.get("user_email"))
                                         rebuild_index(REPORTS_DIR)
                                         cleanup_job(job_id, JOBS_DIR)
                                     except Exception:
@@ -685,7 +696,8 @@ async def stream_job(job_id: str) -> StreamingResponse:
                                            status="complete",
                                            started_at=jdata.get("started_at", ""))
                             if pfx:
-                                _trigger_reflection(pfx, jdata.get("query", ""), jdata.get("no_learn", False))
+                                _trigger_reflection(pfx, jdata.get("query", ""), jdata.get("no_learn", False),
+                                                    user_id=jdata.get("user_id"), user_email=jdata.get("user_email"))
                             rebuild_index(REPORTS_DIR)
                             cleanup_job(job_id, JOBS_DIR)
                         yield f"data: {_json.dumps({'type': 'done', 'status': status, 'result': result})}\n\n"

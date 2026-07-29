@@ -104,13 +104,19 @@ def report_usage(
 
 
 def report_from_response(resp_json: dict, model: str | None, feature: str,
-                         status: str = "ok", duration_ms: int | None = None) -> None:
+                         status: str = "ok", duration_ms: int | None = None,
+                         user_id: str | None = None, user_email: str | None = None) -> None:
     """Convenience for the direct chat/completions calls: pull `usage` off a
-    parsed OpenAI-style response and report it (attributed to the process-global
-    user set by the worker). Best-effort; never raises."""
+    parsed OpenAI-style response and report it. Attribution: explicit
+    user_id/user_email win when given; otherwise the process-global user set by
+    the worker. The explicit path exists for API-process call sites (reflection)
+    where the process-global user is never set — that gap was exactly the
+    permanently-NULL `learning` rows found 2026-07-29. Best-effort; never raises."""
     try:
         usage = (resp_json or {}).get("usage") or {}
         report_usage(
+            user_id=user_id,
+            user_email=user_email,
             model=model,
             feature=feature,
             prompt_tokens=usage.get("prompt_tokens", 0) or 0,

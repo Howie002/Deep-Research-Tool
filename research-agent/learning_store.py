@@ -204,7 +204,8 @@ Produce 3–7 lessons. Respond with JSON of exactly this shape:
 }}"""
 
 
-def _call_llm(system: str, user: str, timeout: float = 120.0) -> Optional[str]:
+def _call_llm(system: str, user: str, timeout: float = 120.0,
+              user_id: Optional[str] = None, user_email: Optional[str] = None) -> Optional[str]:
     url = LM_STUDIO_BASE_URL.rstrip("/") + "/chat/completions"
     payload = {
         "model": LM_STUDIO_MODEL,
@@ -224,7 +225,10 @@ def _call_llm(system: str, user: str, timeout: float = 120.0) -> Optional[str]:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-        report_from_response(body, LM_STUDIO_MODEL, "learning")
+        # Reflection runs in the API process, where the process-global telemetry
+        # user is never set — attribute explicitly to the job's submitter.
+        report_from_response(body, LM_STUDIO_MODEL, "learning",
+                             user_id=user_id, user_email=user_email)
         return body.get("choices", [{}])[0].get("message", {}).get("content") or None
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, IndexError):
         return None
@@ -258,6 +262,8 @@ def run_reflection(
     meta: Optional[dict] = None,           # accepted for API compatibility; unused
     store_path: Optional[Path] = None,
     source_run: str = "",
+    user_id: Optional[str] = None,         # job submitter — telemetry attribution only
+    user_email: Optional[str] = None,
 ) -> Optional[dict]:
     """Reflect on a completed run and append a new insight.
 
@@ -274,7 +280,7 @@ def run_reflection(
         notes=_truncate(notes, 12000),
         gaps=_truncate(gaps, 3000),
     )
-    raw = _call_llm(_REFLECTION_SYSTEM, user)
+    raw = _call_llm(_REFLECTION_SYSTEM, user, user_id=user_id, user_email=user_email)
     parsed = _parse_reflection(raw or "")
     if not isinstance(parsed, dict):
         return None
