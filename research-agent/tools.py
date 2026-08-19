@@ -9,12 +9,15 @@ Search backends supported (configure via SEARCH_BACKEND env var):
 """
 from __future__ import annotations
 
+import ipaddress
 import json as _json
 import re
+import socket
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Type
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -630,6 +633,63 @@ def _extract_pdf(content_bytes: bytes, max_chars: int = 40_000) -> str | None:
         return None
 
 
+# ── SSRF guard ──────────────────────────────────────────────────────────────
+# Deep Research runs on the 10.2.35.x AI VLAN next to the LLM proxy (:4000),
+# cluster agents (:5000), and internal dashboards. Without this, a URL the agent
+# is steered toward (a poisoned search result, or an instruction injected into a
+# fetched page) could read internal services and return their bodies into the
+# report. Applied at the single fetch entry point (FetchPageTool._run) so it
+# covers every strategy, plus per-redirect-hop on the direct request.
+class _BlockedURL(Exception):
+    pass
+
+
+def _is_internal_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    return (
+        addr.is_private or addr.is_loopback or addr.is_link_local
+        or addr.is_reserved or addr.is_multicast or addr.is_unspecified
+    )
+
+
+def assert_public_url(url: str) -> None:
+    """Allow only http/https to a host that resolves entirely to public IPs."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise _BlockedURL(f"scheme {parts.scheme or '(none)'}")
+    host = parts.hostname
+    if not host:
+        raise _BlockedURL("no host")
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        raise _BlockedURL("DNS resolution failed")
+    for info in infos:
+        ip = info[4][0]
+        if _is_internal_ip(ip):
+            raise _BlockedURL(f"internal address {ip}")
+
+
+def _get_vetted(url: str, timeout: int, max_redirects: int = 5):
+    """requests.get with redirects followed MANUALLY so every hop is SSRF-vetted
+    (a public URL must not be able to 302 to an internal one)."""
+    current = url
+    for _ in range(max_redirects + 1):
+        assert_public_url(current)
+        resp = _http_session.get(current, timeout=timeout, allow_redirects=False)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location")
+            if not loc:
+                return resp
+            current = urljoin(current, loc)
+            continue
+        return resp
+    raise _BlockedURL("too many redirects")
+
+
 def _fetch_with_trafilatura(url: str) -> str | None:
     """Fetch and extract via trafilatura — handles many paywalls and JS-heavy pages."""
     if not _TRAFILATURA_OK:
@@ -940,6 +1000,13 @@ class FetchPageTool(BaseTool):
     args_schema: Type[BaseModel] = FetchPageInput
 
     def _run(self, url: str) -> str:
+        # SSRF guard — refuse non-http(s) and any host resolving to an internal
+        # address, before ANY fetch strategy runs.
+        try:
+            assert_public_url(url)
+        except _BlockedURL as exc:
+            log(f"Blocked fetch of {url}: {exc}")
+            return f"⚠ Blocked: {url} is not an allowed external address ({exc})."
         if _fetched.already_fetched(url):
             return f"Already fetched: {url} — use the content from earlier in this conversation."
         category = classify(url)
@@ -961,7 +1028,7 @@ class FetchPageTool(BaseTool):
             # ── Strategy 2: direct requests + BeautifulSoup (or PDF) ─────
             text = None
             try:
-                resp = _http_session.get(url, timeout=14)
+                resp = _get_vetted(url, timeout=14)
                 resp.raise_for_status()
                 content_type = resp.headers.get("Content-Type", "").lower()
                 is_pdf = "application/pdf" in content_type or resp.content[:5] == b"%PDF-"

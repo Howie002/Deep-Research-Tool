@@ -2447,16 +2447,47 @@ class DiscoverResponse(BaseModel):
     endpoints: list[DiscoveredEndpoint]
 
 
+# Provider API keys are masked in responses so they aren't disclosed to callers
+# (they used to be returned verbatim). The mask round-trips: if a POST sends a
+# value back unchanged (empty or still masked), we keep the stored key.
+def _mask_key(v: str) -> str:
+    return ("••••" + v[-4:]) if v else ""
+
+
+def _is_masked(v: str) -> bool:
+    return v == "" or v.startswith("••••")
+
+
+def _resolve_key(incoming: str, env_name: str) -> str:
+    """New value if the caller actually typed one; otherwise keep what's stored."""
+    return os.environ.get(env_name, "") if _is_masked(incoming) else incoming
+
+
+def _llm_base_url_allowed(url: str) -> bool:
+    """The LLM base URL must stay internal — otherwise an authed user could
+    repoint every LLM call (carrying research prompts + donor context) at a host
+    they control. Allow loopback and the AI VLAN (10.2.35.x) only."""
+    try:
+        from urllib.parse import urlsplit
+        host = (urlsplit(url).hostname or "").lower()
+    except Exception:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    return host.startswith("10.2.35.")
+
+
 @app.get("/api/settings", response_model=SettingsResponse)
 async def get_settings() -> SettingsResponse:
-    """Return the current connection, search, and research behaviour settings."""
+    """Return the current connection, search, and research behaviour settings.
+    Provider API keys are returned MASKED (never in plaintext)."""
     return SettingsResponse(
         base_url=os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1"),
         model=os.environ.get("LM_STUDIO_MODEL", "local-model"),
         search_backend=os.environ.get("SEARCH_BACKEND", "duckduckgo"),
-        langsearch_api_key=os.environ.get("LANGSEARCH_API_KEY", ""),
-        brave_api_key=os.environ.get("BRAVE_API_KEY", ""),
-        serpapi_key=os.environ.get("SERPAPI_KEY", ""),
+        langsearch_api_key=_mask_key(os.environ.get("LANGSEARCH_API_KEY", "")),
+        brave_api_key=_mask_key(os.environ.get("BRAVE_API_KEY", "")),
+        serpapi_key=_mask_key(os.environ.get("SERPAPI_KEY", "")),
         max_search_results=int(os.environ.get("MAX_SEARCH_RESULTS", "5")),
         max_page_content_length=int(os.environ.get("MAX_PAGE_CONTENT_LENGTH", "4000")),
         context_limit_tokens=int(os.environ.get("CONTEXT_LIMIT_TOKENS", "256000")),
@@ -2466,13 +2497,21 @@ async def get_settings() -> SettingsResponse:
 @app.post("/api/settings", response_model=SettingsResponse)
 async def update_settings(body: SettingsUpdateRequest) -> SettingsResponse:
     """Persist new connection and search settings to .env and update the live environment."""
+    if not _llm_base_url_allowed(body.base_url):
+        raise HTTPException(status_code=400, detail="LLM base URL must be a loopback or 10.2.35.x (AI VLAN) address.")
+
+    # Provider keys: keep the stored value when the caller didn't type a new one.
+    langsearch = _resolve_key(body.langsearch_api_key, "LANGSEARCH_API_KEY")
+    brave      = _resolve_key(body.brave_api_key, "BRAVE_API_KEY")
+    serpapi    = _resolve_key(body.serpapi_key, "SERPAPI_KEY")
+
     # Update os.environ immediately (affects next spawned worker)
     os.environ["LM_STUDIO_BASE_URL"]       = body.base_url
     os.environ["LM_STUDIO_MODEL"]          = body.model
     os.environ["SEARCH_BACKEND"]           = body.search_backend
-    os.environ["LANGSEARCH_API_KEY"]       = body.langsearch_api_key
-    os.environ["BRAVE_API_KEY"]            = body.brave_api_key
-    os.environ["SERPAPI_KEY"]              = body.serpapi_key
+    os.environ["LANGSEARCH_API_KEY"]       = langsearch
+    os.environ["BRAVE_API_KEY"]            = brave
+    os.environ["SERPAPI_KEY"]              = serpapi
     os.environ["MAX_SEARCH_RESULTS"]       = str(body.max_search_results)
     os.environ["MAX_PAGE_CONTENT_LENGTH"]  = str(body.max_page_content_length)
     os.environ["CONTEXT_LIMIT_TOKENS"]     = str(body.context_limit_tokens)
@@ -2481,9 +2520,9 @@ async def update_settings(body: SettingsUpdateRequest) -> SettingsResponse:
     _write_env_key("LM_STUDIO_BASE_URL",      body.base_url)
     _write_env_key("LM_STUDIO_MODEL",         body.model)
     _write_env_key("SEARCH_BACKEND",          body.search_backend)
-    _write_env_key("LANGSEARCH_API_KEY",      body.langsearch_api_key)
-    _write_env_key("BRAVE_API_KEY",           body.brave_api_key)
-    _write_env_key("SERPAPI_KEY",             body.serpapi_key)
+    _write_env_key("LANGSEARCH_API_KEY",      langsearch)
+    _write_env_key("BRAVE_API_KEY",           brave)
+    _write_env_key("SERPAPI_KEY",             serpapi)
     _write_env_key("MAX_SEARCH_RESULTS",      str(body.max_search_results))
     _write_env_key("MAX_PAGE_CONTENT_LENGTH", str(body.max_page_content_length))
     _write_env_key("CONTEXT_LIMIT_TOKENS",    str(body.context_limit_tokens))
@@ -2492,9 +2531,9 @@ async def update_settings(body: SettingsUpdateRequest) -> SettingsResponse:
         base_url=body.base_url,
         model=body.model,
         search_backend=body.search_backend,
-        langsearch_api_key=body.langsearch_api_key,
-        brave_api_key=body.brave_api_key,
-        serpapi_key=body.serpapi_key,
+        langsearch_api_key=_mask_key(langsearch),
+        brave_api_key=_mask_key(brave),
+        serpapi_key=_mask_key(serpapi),
         max_search_results=body.max_search_results,
         max_page_content_length=body.max_page_content_length,
         context_limit_tokens=body.context_limit_tokens,
