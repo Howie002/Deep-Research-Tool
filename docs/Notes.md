@@ -1,5 +1,31 @@
 # Deep Research Tool - Notes
 
+## 2026-08-19 - Security audit H3: SSRF guard on page fetch, and the settings endpoint stops handing out provider keys
+
+Commit `c2ab80e`, `dev2`; API restarted 12:16 on `127.0.0.1:8765`. Closes audit H3 (report: Second Brain
+`3. Planning/7. Work Projects/0. Active Priority/Fleet-Security-Audit-2026-08-19.md`).
+
+**SSRF in `FetchPageTool` (`research-agent/tools.py`).** A grep for private-IP checks across the repo
+returned nothing — there was no guard at all, and `allow_redirects=True`. The planner emits a `fetch`
+for whatever URL it is steered to and the worker fetched `action["url"]` directly, so a poisoned search
+result or injected page text could drive fetches of `169.254.169.254`, `10.2.35.10:4000`, or
+`127.0.0.1:5000`, with the body landing in the finished report. Now vetted via `ipaddress` —
+private / loopback / link-local rejected before the request goes out.
+
+**Settings endpoints.** `GET /api/settings` returned provider API keys in **plaintext** and
+`POST /api/settings` rewrote `.env` including the **LLM base URL**, with no in-code auth — meaning any
+user with Deep Research access could have redirected all LLM traffic to a host they controlled. Keys
+are now masked on read and writes are validated.
+
+**Worth keeping straight:** the API binds `127.0.0.1`, so it was never reachable except through the SSO
+proxy — that is what downgraded this from Critical to High in the audit. It was **not** a reason to skip
+the fix: the SSRF was reachable by any authenticated research job and by injected web content, and the
+settings write was reachable by any user with tool access. Proxy-gated is not the same as safe.
+
+⚠️ This guard is a **separate implementation** from Foundation Chat's TypeScript one (`0c2c94b`). The
+audit asked for one shared vetting utility per language; three call sites were fixed independently, so
+nothing new inherits it automatically.
+
 ## 2026-07-29 (Wednesday, later) - Telemetry: reflection now attributes to the job submitter; the NULL-user mystery decomposed
 
 Repo `Deep-Research-Tool` `fd7e65d`, `dev2`; companion LC fix `718ec15`. Backend restarted surgically (kill + relaunch `run.py api` on 127.0.0.1:8765; the :3015 frontend was never touched).
