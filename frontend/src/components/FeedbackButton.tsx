@@ -177,6 +177,45 @@ export default function FeedbackButton() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
+  const [pasteBusy, setPasteBusy] = useState(false);
+
+  // Feedback #249 (Andrew): "allow for paste of an image into the feedback tab -
+  // update all feedback tabs to allow it." Screenshot capture already existed, but
+  // it makes you drive getDisplayMedia and pick the tab; pasting is what people
+  // actually do after PrtScn or a snipping tool.
+  //
+  // Runs the pasted image through the SAME compressor the capture path uses, so it
+  // is subject to the identical size cap: the API silently nulls an oversized body,
+  // and a screenshot that vanishes with no error is worse than no screenshot.
+  const onPasteImage = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {{
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItem = items.find((it) => it.type.startsWith('image/'));
+    if (!imageItem) return;              // plain-text paste: leave it alone
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    e.preventDefault();
+    setPasteBusy(true);
+    try {{
+      const dataUrl = await new Promise<string>((resolve, reject) => {{
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      }});
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {{
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('could not decode pasted image'));
+        img.src = dataUrl;
+      }});
+      setShot(await cropAndCompress(img, 0, 0, img.naturalWidth, img.naturalHeight));
+    }} catch {{
+      // A paste we cannot decode must not eat the feedback the user typed.
+    }} finally {{
+      setPasteBusy(false);
+    }}
+  }}, []);
+
   const [frame, setFrame] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
 
@@ -316,13 +355,18 @@ export default function FeedbackButton() {
                     about the Deep Research Agent. This goes to the AI team.
                   </p>
                   <textarea
+                    onPaste={onPasteImage}
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     rows={6}
                     autoFocus
-                    placeholder="Your feedback…"
+                    placeholder="Your feedback… (you can paste a screenshot)"
                     className="w-full resize-none border border-[#D6D3C4] bg-[#FFFFFF] text-[#1A1A1A] text-sm px-4 py-3 rounded-md focus:outline-none focus:border-[#500000] transition-colors duration-150 leading-relaxed"
                   />
+
+                  {pasteBusy && (
+                    <p className="text-[11px] opacity-70">Adding pasted image…</p>
+                  )}
 
                   {shot ? (
                     <div className="relative inline-block">
