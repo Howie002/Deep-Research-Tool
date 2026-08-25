@@ -1,6 +1,6 @@
 # Research Agent
 
-> **⚠️ STALE SNAPSHOT (pre-2026-05). Superseded — see the repo-root ROADMAP.md and the Second Brain 'Deep Research Tool' folder.** Production today: FastAPI :8765 + Next.js :3015 (/DeepResearch), Death Star nvfp4 gemma via LiteLLM :4000, DuckDuckGo search (settled), Light/Medium/Heavy depth toggle.
+> **⚠️ STALE SNAPSHOT (pre-2026-05). Superseded — see the repo docs/Roadmap.md and the Second Brain 'Deep Research Tool' folder.** Production today: FastAPI :8765 + Next.js :3015 (/DeepResearch), Death Star nvfp4 gemma via LiteLLM :4000, DuckDuckGo search (settled), Light/Medium/Heavy depth toggle.
 
 A fully local, multi-agent research pipeline built with **CrewAI** and **LM Studio**.
 No paid subscriptions. No mandatory API keys. Runs entirely on your machine.
