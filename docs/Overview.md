@@ -4,8 +4,21 @@
 
 - **GitHub:** [Howie002/Deep-Research-Tool](https://github.com/Howie002/Deep-Research-Tool) (private)
 - **GitLab:** [tamfassoc_gitlab/ai/Deep-Research-Tool](https://gitlab.com/tamfassoc_gitlab/ai/Deep-Research-Tool) (private) - *⚠️ corrected 2026-07-29: the aivm clone has NO GitLab push remote (GitHub-only), like every fleet repo. Dual-remote directive reconciliation flagged to Andrew.*
-**Local path:** `~/Documents/VS Code Projects/Deep Research Tool/Deep-Research-Tool/`
+**Local path:** `~/Documents/Foundation AI Projects/Deep-Research-Agent/` *(corrected 2026-08-25 — the old `VS Code Projects/Deep Research Tool/` path predates the move to the standard repo root and no longer exists)*
 **Branch model:** `main` (stable linear pipeline), `dev2` (active - adaptive claims-model loop)
+
+> ⚠️ **Name mismatch, deliberate but easy to trip on:** the GitHub repo is **`Deep-Research-Tool`**
+> while the local clone directory is **`Deep-Research-Agent`**. Both are correct; `git remote -v`
+> resolves it. Nothing depends on the directory name.
+
+### Superseded precursor — `research-agent`
+
+[github.com/Howie002/research-agent](https://github.com/Howie002/research-agent) (private) is the
+**original CrewAI + LM Studio prototype** this tool grew out of. It is **archived, not maintained,
+and deliberately not cloned to aivm** — classified as such in the 2026-08-25 fleet audit. A copy is
+already vendored inside this repo at `research-agent/`, carrying explicit *STALE SNAPSHOT
+(pre-2026-05)* banners that point back to the current `docs/Roadmap.md`. Do not treat it as a second
+live implementation.
 
 ## Purpose
 
