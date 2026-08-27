@@ -13,10 +13,13 @@ export const dynamic = 'force-dynamic';
 /** Screenshot data-URL cap: stays comfortably under proxy body limits. */
 const SCREENSHOT_MAX_CHARS = 900_000;
 const SCREENSHOT_PREFIX = /^data:image\/(jpeg|png);base64,/;
+/** Feedback #268: how many images one note may carry. */
+const MAX_SCREENSHOTS = 6;
 
 export async function POST(req: Request) {
   let comment = '';
   let screenshot: string | null = null;
+  let screenshots: string[] = [];
   let pageUrl: string | null = null;
   try {
     const body = await req.json();
@@ -29,6 +32,22 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Screenshot too large' }, { status: 413 });
       }
       screenshot = body.screenshot;
+    }
+    // Feedback #268: the same format and size rules as the single screenshot
+    // above, applied per image. An oversized or malformed one is REJECTED
+    // rather than dropped: a picture that silently vanishes is worse than an
+    // error the user can see.
+    if (Array.isArray(body?.screenshots)) {
+      for (const extra of body.screenshots.slice(0, MAX_SCREENSHOTS)) {
+        if (typeof extra !== 'string' || !extra) continue;
+        if (!SCREENSHOT_PREFIX.test(extra)) {
+          return NextResponse.json({ error: 'Bad screenshot format' }, { status: 400 });
+        }
+        if (extra.length > SCREENSHOT_MAX_CHARS) {
+          return NextResponse.json({ error: 'Screenshot too large' }, { status: 413 });
+        }
+        screenshots.push(extra);
+      }
     }
     if (typeof body?.pageUrl === 'string' && body.pageUrl.trim()) {
       pageUrl = body.pageUrl.trim().slice(0, 2000);
@@ -45,6 +64,7 @@ export async function POST(req: Request) {
     userEmail: req.headers.get('x-foundation-email'),
     comment: comment.slice(0, 4000),
     screenshot,
+    screenshots,
     pageUrl,
   });
 

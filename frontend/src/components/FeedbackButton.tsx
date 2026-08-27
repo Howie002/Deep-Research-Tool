@@ -176,8 +176,20 @@ export default function FeedbackButton() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [shot, setShot] = useState<string | null>(null);
+  // Feedback #268 (Andrew): "It also needs to be able to have multiple pictures
+  // added." A list rather than one slot; ordinal 0 goes in the legacy
+  // `screenshot` field so the ingest route stays backwards-compatible.
+  const [shots, setShots] = useState<string[]>([]);
   const [pasteBusy, setPasteBusy] = useState(false);
+
+  /** Matches MAX_SCREENSHOTS in frontend/src/app/api/feedback/route.ts. */
+  const MAX_SHOTS = 6;
+
+  // Append rather than replace, and stop at the cap. Functional update because
+  // a multi-image paste calls this once per image in the same tick.
+  const addShots = useCallback((dataUrls: string[]) => {
+    setShots((prev) => [...prev, ...dataUrls].slice(0, MAX_SHOTS));
+  }, []);
 
   // Feedback #249 (Andrew): "allow for paste of an image into the feedback tab -
   // update all feedback tabs to allow it." Screenshot capture already existed, but
@@ -187,34 +199,45 @@ export default function FeedbackButton() {
   // Runs the pasted image through the SAME compressor the capture path uses, so it
   // is subject to the identical size cap: the API silently nulls an oversized body,
   // and a screenshot that vanishes with no error is worse than no screenshot.
-  const onPasteImage = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {{
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const imageItem = items.find((it) => it.type.startsWith('image/'));
-    if (!imageItem) return;              // plain-text paste: leave it alone
-    const file = imageItem.getAsFile();
-    if (!file) return;
+  const onPasteImage = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // Feedback #268: a single paste can carry several images (selecting two
+    // files in a file manager and copying, for instance), so take them all
+    // rather than only the first match.
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter((it) => it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f != null);
+    if (!files.length) return;           // plain-text paste: leave it alone
     e.preventDefault();
     setPasteBusy(true);
-    try {{
-      const dataUrl = await new Promise<string>((resolve, reject) => {{
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      }});
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {{
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('could not decode pasted image'));
-        img.src = dataUrl;
-      }});
-      setShot(await cropAndCompress(img, 0, 0, img.naturalWidth, img.naturalHeight));
-    }} catch {{
-      // A paste we cannot decode must not eat the feedback the user typed.
-    }} finally {{
+    try {
+      const decoded: string[] = [];
+      for (const file of files) {
+        try {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+          });
+          const img = new Image();
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error('could not decode pasted image'));
+            img.src = dataUrl;
+          });
+          // Same compressor the capture path uses, so pasted and captured
+          // images are subject to the identical size cap.
+          decoded.push(cropAndCompress(img, 0, 0, img.naturalWidth, img.naturalHeight));
+        } catch {
+          // One undecodable image must not discard the others, nor the text.
+        }
+      }
+      if (decoded.length) addShots(decoded);
+    } finally {
       setPasteBusy(false);
-    }}
-  }}, []);
+    }
+  }, [addShots]);
 
   const [frame, setFrame] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -225,7 +248,7 @@ export default function FeedbackButton() {
       setSent(false);
       setSending(false);
       setError(null);
-      setShot(null);
+      setShots([]);
       setFrame(null);
       setCapturing(false);
     }
@@ -251,7 +274,7 @@ export default function FeedbackButton() {
     setCapturing(true); // hides the modal so it isn't in the shot
     try {
       const png = await captureTabFrame();
-      setShot(await compressFullFrame(png));
+      addShots([await compressFullFrame(png)]);
     } catch {
       setError('Screen capture was cancelled or blocked.');
     }
@@ -259,10 +282,10 @@ export default function FeedbackButton() {
   };
 
   const onCrop = useCallback((dataUrl: string) => {
-    setShot(dataUrl);
+    addShots([dataUrl]);
     setFrame(null);
     setCapturing(false);
-  }, []);
+  }, [addShots]);
 
   const onCropCancel = useCallback(() => {
     setFrame(null);
@@ -280,7 +303,10 @@ export default function FeedbackButton() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           comment: text,
-          screenshot: shot ?? undefined,
+          // Feedback #268: image 0 stays in `screenshot` so an older dashboard
+          // build still records it; the rest ride in `screenshots`.
+          screenshot: shots[0] ?? undefined,
+          screenshots: shots.slice(1),
           pageUrl: window.location.href,
         }),
       });
@@ -368,22 +394,37 @@ export default function FeedbackButton() {
                     <p className="text-[11px] opacity-70">Adding pasted image…</p>
                   )}
 
-                  {shot ? (
-                    <div className="relative inline-block">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={shot}
-                        alt="Attached screenshot"
-                        className="max-h-28 rounded-md border border-[#D6D3C4]"
-                      />
-                      <button
-                        onClick={() => setShot(null)}
-                        title="Remove screenshot"
-                        className="absolute -top-2 -right-2 bg-[#500000] text-white rounded-full p-1 hover:bg-[#3c001c]"
-                      >
-                        <X size={11} />
-                      </button>
+                  {/* Feedback #268: every attached image, each removable on its
+                      own. The capture buttons below stay visible instead of
+                      being swapped out by the first attachment - with several
+                      images allowed, hiding the way to add another was the
+                      thing that made this feel like a single-image box. */}
+                  {shots.length > 0 && (
+                    <div className="flex flex-wrap gap-3">
+                      {shots.map((src, i) => (
+                        <div key={i} className="relative inline-block">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt={`Attached screenshot ${i + 1} of ${shots.length}`}
+                            className="max-h-28 rounded-md border border-[#D6D3C4]"
+                          />
+                          <button
+                            onClick={() => setShots((prev) => prev.filter((_, j) => j !== i))}
+                            title={`Remove image ${i + 1}`}
+                            className="absolute -top-2 -right-2 bg-[#500000] text-white rounded-full p-1 hover:bg-[#3c001c]"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
+                  )}
+
+                  {shots.length >= MAX_SHOTS ? (
+                    <p className="text-[11px] text-[#909090]">
+                      That is the maximum of {MAX_SHOTS} images. Remove one to add another.
+                    </p>
                   ) : (
                     <div className="flex items-center gap-2 flex-wrap">
                       <button
