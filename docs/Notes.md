@@ -1,5 +1,15 @@
 # Deep Research Tool - Notes
 
+## 2026-08-27/28 - #268: paste multiple images at once in the feedback widget
+
+Andrew: *"It also needs to be able to have multiple pictures added."* The feedback widget's paste
+handler now takes every image in one clipboard paste, not just the first, and each gets its own
+thumbnail + remove button (capped at 6); the server-side route accepts a `screenshots[]` array
+alongside the existing single `screenshot` field. Build-verified, committed `7ef58f5`, pushed,
+and restarted + live-verified at Dominic's daily closeout (process start postdates the build,
+health check <500). Full record of the fleet-wide rollout in the
+[Foundation AI Dashboard Notes](../Foundation%20AI%20Dashboard/Notes.md) 2026-08-27/28.
+
 ## 2026-08-19 - Security audit H3: SSRF guard on page fetch, and the settings endpoint stops handing out provider keys
 
 Commit `c2ab80e`, `dev2`; API restarted 12:16 on `127.0.0.1:8765`. Closes audit H3 (report: Second Brain
