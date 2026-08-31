@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
   // so streams and long runs aren't cut at 30s.
   // proxyClientMaxBodySize: Next 16 caps proxied request bodies at 10MB by
   // default, which silently truncates large uploads before they reach the
-  // FastAPI backend (HyperFrames generation incident, 2026-07-02).
+  // FastAPI backend (Foundation Content Studio generation incident, 2026-07-02).
   experimental: { proxyTimeout: 3_600_000, proxyClientMaxBodySize: '200mb' },
 
   // The FastAPI backend serves its routes at ROOT (/api/..., /health). Proxy
