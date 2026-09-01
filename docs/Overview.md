@@ -3,7 +3,7 @@
 ## Repository
 
 - **GitHub:** [Howie002/Deep-Research-Tool](https://github.com/Howie002/Deep-Research-Tool) (private)
-- **GitLab:** [tamfassoc_gitlab/ai/Deep-Research-Tool](https://gitlab.com/tamfassoc_gitlab/ai/Deep-Research-Tool) (private) - *⚠️ corrected 2026-07-29: the aivm clone has NO GitLab push remote (GitHub-only), like every fleet repo. Dual-remote directive reconciliation flagged to Andrew.*
+- **GitLab:** [tamfassoc_gitlab/ai/Deep-Research-Tool](https://gitlab.com/tamfassoc_gitlab/ai/Deep-Research-Tool) (private) - *push-mirrored 2026-09-01: this clone's `gitlab` remote is live and verified (local HEAD matches GitLab HEAD on the current branch). Andrew's dual-remote directive is resolved fleet-wide as of today.*
 **Local path:** `~/Documents/Foundation AI Projects/Deep-Research-Agent/` *(corrected 2026-08-25 — the old `VS Code Projects/Deep Research Tool/` path predates the move to the standard repo root and no longer exists)*
 **Branch model:** `main` (stable linear pipeline), `dev2` (active - adaptive claims-model loop)
 
