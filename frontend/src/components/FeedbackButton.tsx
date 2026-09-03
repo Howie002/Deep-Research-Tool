@@ -239,6 +239,50 @@ export default function FeedbackButton() {
     }
   }, [addShots]);
 
+  // Document-level paste listener: catches Ctrl+V anywhere in the modal,
+  // not just when the textarea is focused. Fires before the textarea's own
+  // onPaste only when some other element holds focus; the TEXTAREA guard
+  // below prevents double-handling when the textarea IS focused.
+  useEffect(() => {
+    if (!open) return;
+    const handle = (e: ClipboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+      const files = Array.from(e.clipboardData?.items ?? [])
+        .filter((it) => it.type.startsWith('image/'))
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => f != null);
+      if (!files.length) return;
+      setPasteBusy(true);
+      Promise.all(
+        files.map(async (file) => {
+          try {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result));
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(file);
+            });
+            const img = new Image();
+            await new Promise<void>((resolve, reject) => {
+              img.onload = () => resolve();
+              img.onerror = () => reject(new Error('could not decode'));
+              img.src = dataUrl;
+            });
+            return cropAndCompress(img, 0, 0, img.naturalWidth, img.naturalHeight);
+          } catch {
+            return null;
+          }
+        })
+      ).then((results) => {
+        const valid = results.filter((r): r is string => r != null);
+        if (valid.length) addShots(valid);
+        setPasteBusy(false);
+      });
+    };
+    document.addEventListener('paste', handle);
+    return () => document.removeEventListener('paste', handle);
+  }, [open, addShots]);
+
   const [frame, setFrame] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
 
