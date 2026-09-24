@@ -1,5 +1,9 @@
 # Deep Research Tool - Notes
 
+## 2026-09-24 - Roadmap converted to the v1 format
+
+Roadmap.md converted to the standard roadmap format (`2. Agents/Roadmap Format.md`: phases, then items, with #topic tags), requested in PM Dashboard feedback #435. Converted by script; every original line kept. No phase-style headings were found, so it has no phases yet: its sections stay plain sections, and it shows on the AI Master Plan as its activity span until phases are added. Item boxes now carry status (`[/]` in progress, `[!]` blocked, `[-]` deferred) where the item already said so.
+
 ## 2026-09-24 - Help Center manual: standing requirement
 
 This tool's training manual belongs in the dashboard Help Center (`ai.txamfoundation.com/help`), tool id `deep-research-agent`. None is written yet; it will live at `foundation-ai-dashboard/content/wiki/deep-research-agent/`.

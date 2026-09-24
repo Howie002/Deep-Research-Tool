@@ -1,3 +1,4 @@
+<!-- pm-roadmap v1 · Agent instructions: this file uses the Foundation roadmap format (Second Brain: "2. Agents/Roadmap Format.md"). Phases are "## Phase: Name" headings with one "Dates: ... · Status: ..." line under them; items are checkbox lines inside a phase; topics are #Tags. Keep this structure when editing. -->
 # Deep Research Tool - Roadmap
 
 **Repo:** [Howie002/Deep-Research-Tool](https://github.com/Howie002/Deep-Research-Tool) (private)
@@ -17,7 +18,7 @@
 Evaluate **Odysseus**' Deep Research module (adapted from Alibaba's Tongyi DeepResearch, model: Tongyi-30B-A3B) as a candidate alternative / complement to the in-house tool — or as a source of ideas to fold in. Full context in Notes.md (2026-06-02). Research only so far; nothing installed.
 
 ### Decide posture
-- [ ] **Adopt / Complement / Harvest** - choose one: adopt Odysseus' engine, run both and route by use case, or study Tongyi + IterResearch + SearXNG/Chroma plumbing and fold the best parts into our own loop
+- [ ] **Adopt / Complement / Harvest** :: choose one: adopt Odysseus' engine, run both and route by use case, or study Tongyi + IterResearch + SearXNG/Chroma plumbing and fold the best parts into our own loop
 - [ ] If "engine only," compare integrating upstream Tongyi DeepResearch directly vs. the whole Odysseus workspace
 
 ### Interim eval (no Deathstar dependency)
@@ -31,41 +32,41 @@ Evaluate **Odysseus**' Deep Research module (adapted from Alibaba's Tongyi DeepR
 
 ### Live deploy + next steps (2026-06-03)
 > Comparison concluded the in-house loop already embodies IterResearch's core; **model is the lever, not the loop.** Agent is **live** on `:8765` against Gemma-on-Nano. Detail + model roster → [Odysseus-Engine-Integration-Design.md](Odysseus-Engine-Integration-Design.md) §7-§9.
-- [x] Boot Deep Research Agent in production on `:8765` (adaptive loop, Gemma-on-Nano) - 2026-06-03
-- [x] **Restore Foundation SearXNG** (was down 5 wks; broken `settings.yml` bind-mount) + **add SearXNGBackend to the tool** and switch `SEARCH_BACKEND=searxng` - 2026-06-03. Was on the DuckDuckGo *fallback*; SearXNG wins on niche queries (found FEA pages DDG missed)
-- [x] 🔴 **FIXED — tool wasn't authenticating to the cluster** (2026-06-03). Every LLM call sent no `Authorization` header → LiteLLM 401 → silent `None` → `parse_failed` everywhere → loop ran blind. Was THE cause of "poor quality." Added `LM_STUDIO_API_KEY` (default `"none"`) + bearer header to all 5 call sites. **Verified:** Galveston query went 0/1→3/8 supported with a real cited report. *This invalidates all prior "Gemma is weak" judgments.*
+- [x] Boot Deep Research Agent in production on `:8765` (adaptive loop, Gemma-on-Nano) - 2026-06-03 done:2026-06-03
+- [x] **Restore Foundation SearXNG** (was down 5 wks; broken `settings.yml` bind-mount) + **add SearXNGBackend to the tool** and switch `SEARCH_BACKEND=searxng` - 2026-06-03. Was on the DuckDuckGo *fallback*; SearXNG wins on niche queries (found FEA pages DDG missed) done:2026-06-03
+- [x] 🔴 **FIXED — tool wasn't authenticating to the cluster** (2026-06-03). Every LLM call sent no `Authorization` header → LiteLLM 401 → silent `None` → `parse_failed` everywhere → loop ran blind. Was THE cause of "poor quality." Added `LM_STUDIO_API_KEY` (default `"none"`) + bearer header to all 5 call sites. **Verified:** Galveston query went 0/1→3/8 supported with a real cited report. *This invalidates all prior "Gemma is weak" judgments.* done:2026-06-03
 - [ ] **Re-judge Gemma vs Qwen/Tongyi** on real output now that the tool actually talks to the model — model swap is now an enhancement, not a fix. (Deep Lowry Mays prospect run 2026-06-03 = solid profile but 2/19 supported + entity drift → real motivation for a stronger model)
-- [x] **Entity disambiguation / anchoring** (2026-06-03) — anti-drift rule in planner + entity-match guard in evaluator. Verified: planner now emits `"Lowry Mays" -Kyle -NBA` style queries and the evaluator refuses wrong-entity evidence. *(Correct, but can't overcome a search backend that returns the wrong entity — see search-reliability item.)*
-- [x] **URL-normalization dedup before fetch** (2026-06-03) — `_norm_url` (host/scheme/www/port/fragment/tracking/trailing-slash) wired into all 4 dedup points
-- [x] **Search retrieval reliability** (2026-06-03, no-key route) — throttled+retried `SearXNGBackend` (2.5s min-interval + backoff) + tuned engine set (added mojeek/qwant/wikipedia/wikidata). Verified: "Lowry Mays" search results 7→32, relevance ~0→22/29. Keyed provider (Brave/Tavily) still the robust longer-term option if throttling proves insufficient at scale.
-- [x] **Loop balance** (2026-06-03) — circuit-breaker 2→1, planner FETCH-FIRST rule, budget searches capped ~half of fetches (heavy 32/15). **✅ VERIFIED on the DDG run:** 21 fetch / 15 search (inverted ratio gone), stopped cleanly on search cap. No longer "unverifiable."
-- [x] ✅ **Search retrieval reliability — SOLVED internally via DuckDuckGo** (2026-06-03). Constraint: solution must be internal (no commercial/keyed API), so Brave/Tavily/Serper are out. **DDG (`DDGS().text()`) is keyless AND doesn't CAPTCHA/suspend under deep-run load** — the failure mode that capped no-key SearXNG. Set `.env SEARCH_BACKEND=duckduckgo`. **Verified end-to-end:** heavy Lowry Mays run → 12/27 supported, genuine cited prospect profile, zero entity contamination, caught the 2022 death + Mays Family Foundation pivot. This supersedes the "keyed provider is the robust fix" conclusion *for the internal-only case.* (Keyed `BraveBackend` still in the tool as a non-internal fallback option.)
-- [ ] **Don't force-fetch off-entity URLs** — circuit-breaker grabs `surfaced_urls[0]` regardless of entity; on the DDG run it fetched Barry Diller + Robert Pittman pages (guard kept them out of output, but wasted budget). Filter surfaced URLs by entity relevance before they enter the fetch queue.
-- [x] **Evidence dedup in synthesis** (2026-06-03) — `_norm_url_key()` + `_dedup_evidence()` in `adaptive_worker.py`, wired into `_claim_block()`; collapses duplicate quotes (same normalized URL+quote) and the evidence count reflects the deduped set. Unit-verified 5→3.
-- [ ] **Near-duplicate *claim* merge** — the two death claims ("Sept 2022" supported + "Sept 12 2022" partial) are semantically one. Deferred: needs fuzzy/LLM matching to merge safely across different statuses/confidences (a blind string merge is risky).
-- [x] **Source-credibility filter** (2026-06-03) — `LOW_CREDIBILITY_DOMAINS` denylist + `_is_low_credibility()` (suffix match) in `tools.py`, applied in `_execute_search()` before fetch/cite. Drops grokipedia.com (AI-generated wiki mirror) + ask/answers. Logs the drop count. Extend the list as more content-farm/AI-mirror domains surface.
+- [x] **Entity disambiguation / anchoring** (2026-06-03) — anti-drift rule in planner + entity-match guard in evaluator. Verified: planner now emits `"Lowry Mays" -Kyle -NBA` style queries and the evaluator refuses wrong-entity evidence. *(Correct, but can't overcome a search backend that returns the wrong entity — see search-reliability item.)* done:2026-06-03
+- [x] **URL-normalization dedup before fetch** (2026-06-03) — `_norm_url` (host/scheme/www/port/fragment/tracking/trailing-slash) wired into all 4 dedup points done:2026-06-03
+- [x] **Search retrieval reliability** (2026-06-03, no-key route) — throttled+retried `SearXNGBackend` (2.5s min-interval + backoff) + tuned engine set (added mojeek/qwant/wikipedia/wikidata). Verified: "Lowry Mays" search results 7→32, relevance ~0→22/29. Keyed provider (Brave/Tavily) still the robust longer-term option if throttling proves insufficient at scale. done:2026-06-03
+- [x] **Loop balance** (2026-06-03) — circuit-breaker 2→1, planner FETCH-FIRST rule, budget searches capped ~half of fetches (heavy 32/15). **✅ VERIFIED on the DDG run:** 21 fetch / 15 search (inverted ratio gone), stopped cleanly on search cap. No longer "unverifiable." done:2026-06-03
+- [x] ✅ **Search retrieval reliability — SOLVED internally via DuckDuckGo** (2026-06-03). Constraint: solution must be internal (no commercial/keyed API), so Brave/Tavily/Serper are out. **DDG (`DDGS().text()`) is keyless AND doesn't CAPTCHA/suspend under deep-run load** — the failure mode that capped no-key SearXNG. Set `.env SEARCH_BACKEND=duckduckgo`. **Verified end-to-end:** heavy Lowry Mays run → 12/27 supported, genuine cited prospect profile, zero entity contamination, caught the 2022 death + Mays Family Foundation pivot. This supersedes the "keyed provider is the robust fix" conclusion *for the internal-only case.* (Keyed `BraveBackend` still in the tool as a non-internal fallback option.) done:2026-06-03
+- [ ] **Don't force-fetch off-entity URLs** :: circuit-breaker grabs `surfaced_urls[0]` regardless of entity; on the DDG run it fetched Barry Diller + Robert Pittman pages (guard kept them out of output, but wasted budget). Filter surfaced URLs by entity relevance before they enter the fetch queue.
+- [x] **Evidence dedup in synthesis** (2026-06-03) — `_norm_url_key()` + `_dedup_evidence()` in `adaptive_worker.py`, wired into `_claim_block()`; collapses duplicate quotes (same normalized URL+quote) and the evidence count reflects the deduped set. Unit-verified 5→3. done:2026-06-03
+- [-] **Near-duplicate *claim* merge** — the two death claims ("Sept 2022" supported + "Sept 12 2022" partial) are semantically one. Deferred: needs fuzzy/LLM matching to merge safely across different statuses/confidences (a blind string merge is risky).
+- [x] **Source-credibility filter** (2026-06-03) — `LOW_CREDIBILITY_DOMAINS` denylist + `_is_low_credibility()` (suffix match) in `tools.py`, applied in `_execute_search()` before fetch/cite. Drops grokipedia.com (AI-generated wiki mirror) + ask/answers. Logs the drop count. Extend the list as more content-farm/AI-mirror domains surface. done:2026-06-03
 
 ### Surfaced by the George P. Mitchell run (2026-06-03, 2nd donor test — 0/21 supported, JS-heavy subject)
 - [ ] 🔴 **Expand the credibility filter to content-farm bio sites** — `studentsandparents.com`, `mabumbe.com`, `goodreturns.in`, `celebritynetworth.com` dominated the Mitchell prose and one fed a WRONG fact ("$2.5B net worth as of 2024" for a man who died 2013). Add these to `LOW_CREDIBILITY_DOMAINS`, or better, build a **positive credibility tier** (news / .edu / .gov / Wikipedia / official-foundation > bio aggregators).
 - [ ] 🔴 **Source-ranking in fetch priority + synthesis** — on the Mitchell run the *best* sources (chron.com "$35M gift / largest A&M donor", philanthropy.com obituary, physicstoday.aip.org, Wikipedia) WERE fetched but the synthesizer headlined a content farm instead. Rank fetch queue + prefer high-credibility sources when writing the brief.
 - [ ] 🔴 **Corroboration-aware budget** — Mitchell ended with 7 single-source partials and 0 supported because budget ran out before double-sourcing. When many claims sit at partial with one source, spend remaining budget seeking a 2nd corroborating source rather than raising new claims (would've converted partials → supported).
 - [ ] **JS-rendered + PDF fetcher — PROMOTE to near-term** (was "secondary" below). The Mitchell run *proves* it's the binding constraint for Foundation-site-heavy subjects: budget burned on `txamfoundation.com/*.aspx` (JS) + `cdn.txamfoundation.com/*.pdf` + `tamus.edu/*.pdf` that extracted ~nothing. Playwright/headless for JS + a PDF text extractor.
-- [ ] **Recency / is-living guard (still open from Mays)** — deceased subject (Mitchell d.2013) reported with a present-tense "2024 net worth." Add an explicit is-living / key-dates claim + present/past-tense discipline for prospect runs.
+- [ ] **Recency / is-living guard (still open from Mays)** :: deceased subject (Mitchell d.2013) reported with a present-tense "2024 net worth." Add an explicit is-living / key-dates claim + present/past-tense discipline for prospect runs.
 
 ### On-brand Foundation UI (2026-06-03)
 > The web UI was a dark indigo single-file app — off-brand vs the Foundation fleet (light maroon `#500000`). Chose **re-skin in place** (preserves all features; fastest to on-brand) over a rebuild.
-- [x] **Re-skin `static/index.html` to the Foundation light+maroon theme** (2026-06-03) — remapped `:root` to the brand palette + appended a "Foundation light theme overrides" layer (prose, citations, chips, badges, pipeline, buttons, inputs, tabs, mind-map). Old indigo accents → **Foundation light-blue** (blue is in the brand guide too); brand chrome → maroon; highlights → gold. Maroon header w/ gold underline + `tamu-foundation-logo.png` + wordmark; title + favicon. Original saved at `static/index.html.dark-backup`.
-- [ ] **Visual QA the re-skin live** — no headless browser on aivm (Playwright still TODO) so the skin is verified structurally only; eyeball at `localhost:8765` / `10.2.35.10:8765` and tune any low-contrast spots.
-- [x] **Rebuild the UI in Next.js for fleet cohesion** — SHIPPED 07-01: Next.js frontend on :3015 (basePath `/DeepResearch`), fleet sidebar + tour + feedback kit; browser-verified 07-07.
-- [ ] **Surface biographical/recency facts** — death (2022) / Mays Family Foundation still not elevated; add an explicit "key dates / is-subject-living + successor entity" claim for prospect runs.
-- [ ] **Biographical/recency claims** — tool reported a deceased subject (Mays, d.2022) in present tense; add a "is the subject living / key dates" claim and pivot-to-foundation logic for prospect work
+- [x] **Re-skin `static/index.html` to the Foundation light+maroon theme** (2026-06-03) — remapped `:root` to the brand palette + appended a "Foundation light theme overrides" layer (prose, citations, chips, badges, pipeline, buttons, inputs, tabs, mind-map). Old indigo accents → **Foundation light-blue** (blue is in the brand guide too); brand chrome → maroon; highlights → gold. Maroon header w/ gold underline + `tamu-foundation-logo.png` + wordmark; title + favicon. Original saved at `static/index.html.dark-backup`. done:2026-06-03
+- [ ] **Visual QA the re-skin live** :: no headless browser on aivm (Playwright still TODO) so the skin is verified structurally only; eyeball at `localhost:8765` / `10.2.35.10:8765` and tune any low-contrast spots.
+- [x] **Rebuild the UI in Next.js for fleet cohesion** :: SHIPPED 07-01: Next.js frontend on :3015 (basePath `/DeepResearch`), fleet sidebar + tour + feedback kit; browser-verified 07-07.
+- [ ] **Surface biographical/recency facts** :: death (2022) / Mays Family Foundation still not elevated; add an explicit "key dates / is-subject-living + successor entity" claim for prospect runs.
+- [ ] **Biographical/recency claims** :: tool reported a deceased subject (Mays, d.2022) in present tense; add a "is the subject living / key dates" claim and pivot-to-foundation logic for prospect work
 - [ ] **Fetcher: JS-rendered page support** (Playwright/headless or reader API) — *secondary:* SearXNG finds the correct page but the static fetcher gets ~497 chars from JS/ASP.NET sites (incl. txamfoundation.com). Real, but not the primary problem.
 - ~~Tune SearXNG~~ — MOOT: `SEARCH_BACKEND=duckduckgo` is the settled production decision (resolves better than local SearXNG; never re-propose)
 - [ ] Improve query **decomposition** (it produced 1 mega-claim instead of sub-claims — model/prompt)
 - ~~Relocate the SearXNG settings file~~ — MOOT (DuckDuckGo settled; SearXNG not in the pipeline)
-- [x] **Path-based reachability** — LIVE: `/DeepResearch` route via the dashboard routing plane (prefix-strip + no-buffering + 1h timeout as route flags); verified 07-07.
-- [ ] **Model bake-off on Deathstar** - Tongyi-30B-A3B vs Qwen3-235B-A22B (+ cheap model) on the 3 pipeline-breakers - *blocked on `.35.2x` migration*
-- [ ] **Task-routing config** - cheap model (Qwen3-30B-A3B/gpt-oss-20b) for query-gen/extraction, strong model for plan/synthesize/judge
+- [x] **Path-based reachability** :: LIVE: `/DeepResearch` route via the dashboard routing plane (prefix-strip + no-buffering + 1h timeout as route flags); verified 07-07.
+- [!] **Model bake-off on Deathstar** :: Tongyi-30B-A3B vs Qwen3-235B-A22B (+ cheap model) on the 3 pipeline-breakers - *blocked on `.35.2x` migration*
+- [ ] **Task-routing config** :: cheap model (Qwen3-30B-A3B/gpt-oss-20b) for query-gen/extraction, strong model for plan/synthesize/judge
 - [ ] **systemd persistence** for the agent (currently a `nohup` job, won't survive reboot)
 
 ---
@@ -104,12 +105,12 @@ Evaluate **Odysseus**' Deep Research module (adapted from Alibaba's Tongyi DeepR
 
 Before the research run begins - in the "before we start" / clarifications phase - the tool should present three output format options and recommend one based on the nature of the query. The user can accept the recommendation or switch. The selected format shapes how the final report is written and what the synthesizer prioritizes.
 
-- [ ] **Output format selector in pre-run phase** - after the user submits a query and before the research loop starts, present three options with a recommended default highlighted:
+- [ ] **Output format selector in pre-run phase** :: after the user submits a query and before the research loop starts, present three options with a recommended default highlighted:
   - **Research Summary with Details** - a balanced report: executive summary at the top, key findings with supporting evidence, sources cited. Best for most general-purpose queries. *Recommended default for most use cases.*
   - **Full Analysis and Details** - comprehensive, exhaustive output; every claim, all evidence, full corroboration chain, nothing omitted; suitable for deep-dive investment or due diligence queries where completeness matters more than readability.
   - **Concise Analysis** - a tight, focused output that directly answers the specific request based on what was found; no filler; best when the user needs a quick, actionable answer rather than a full dossier.
-- [ ] **AI recommendation logic** - the tool recommends a format based on the query type: detailed proper-noun subjects (people, organizations) → Research Summary; explicit "deep dive" / financial / due diligence language → Full Analysis; short, specific factual questions → Concise Analysis. Show the recommendation with a brief one-line rationale.
-- [ ] **Format wired into the synthesizer** - the selected format is passed to the prose synthesizer; Full Analysis expands claim blocks fully and includes supporting evidence verbatim; Concise Analysis compresses to the most-supported conclusions only; Research Summary is the current balanced default.
+- [ ] **AI recommendation logic** :: the tool recommends a format based on the query type: detailed proper-noun subjects (people, organizations) → Research Summary; explicit "deep dive" / financial / due diligence language → Full Analysis; short, specific factual questions → Concise Analysis. Show the recommendation with a brief one-line rationale.
+- [ ] **Format wired into the synthesizer** :: the selected format is passed to the prose synthesizer; Full Analysis expands claim blocks fully and includes supporting evidence verbatim; Concise Analysis compresses to the most-supported conclusions only; Research Summary is the current balanced default.
 
 ---
 
@@ -127,7 +128,7 @@ A special due-diligence workflow that chains Microsoft Copilot Researcher's fron
 
 **Open design tradeoff (as pitched to Chris 2026-07-16):** this requires real cross-platform activity (Copilot → Deep Research Tool hand-off). The alternative - customizing Copilot Researcher's own output format to be "good enough" in a single run - is simpler but eliminates the multi-agent "Brutal Critics" review entirely. Andrew's read: that's a gamble, not yet recommended. Decide after testing.
 
-- [ ] **Validation test** - Andrew proposed testing this workflow on a prior recent large gift before committing to the build. Needs a specific gift/donor case (Chris to weigh in - not chosen yet).
+- [ ] **Validation test** :: Andrew proposed testing this workflow on a prior recent large gift before committing to the build. Needs a specific gift/donor case (Chris to weigh in - not chosen yet).
 - [ ] Define the seed-ingestion format - what a Copilot Researcher output needs to look like to feed cleanly into the adaptive claims-model loop (raw prose vs. pre-decomposed claims, whether citations carry over)
 - [ ] Confirm exact model/version to target at build time rather than assuming "GPT-5.6 Sol" is still current
 - [ ] Decide manual hand-off (copy/paste Copilot Researcher output into the tool) vs. API/connector automation
@@ -143,11 +144,11 @@ A special due-diligence workflow that chains Microsoft Copilot Researcher's fron
 
 After a research run completes, give the user the ability to have a conversational follow-up session grounded in the report. The chat has full context of the report and can run quick web searches to verify or expand on specific points.
 
-- [ ] **Post-research chat surface** - once a report is complete, a "Chat about this" button opens a chat panel (or expands a chat section below the report); the full report content is loaded into the LLM context as the grounding document.
-- [ ] **Web search as a tool call** - the chat model has access to a lightweight web search tool; when a user asks a follow-up question that requires verification or new information ("is this still accurate?" / "what happened after this?"), the model runs a quick targeted search and cites what it found inline.
-- [ ] **Report-grounded responses** - the model prioritizes the report findings in its answers; web search supplements but does not override; responses cite whether the answer came from the report or a fresh search.
-- [ ] **Conversational context** - the chat remembers the conversation thread within the session; the user can ask follow-up questions ("you mentioned X earlier - can you expand on that?") and the model references prior exchanges.
-- [ ] **Session scoping** - the chat is scoped to the specific report; switching to a different report starts a fresh chat context.
+- [ ] **Post-research chat surface** :: once a report is complete, a "Chat about this" button opens a chat panel (or expands a chat section below the report); the full report content is loaded into the LLM context as the grounding document.
+- [ ] **Web search as a tool call** :: the chat model has access to a lightweight web search tool; when a user asks a follow-up question that requires verification or new information ("is this still accurate?" / "what happened after this?"), the model runs a quick targeted search and cites what it found inline.
+- [ ] **Report-grounded responses** :: the model prioritizes the report findings in its answers; web search supplements but does not override; responses cite whether the answer came from the report or a fresh search.
+- [ ] **Conversational context** :: the chat remembers the conversation thread within the session; the user can ask follow-up questions ("you mentioned X earlier - can you expand on that?") and the model references prior exchanges.
+- [ ] **Session scoping** :: the chat is scoped to the specific report; switching to a different report starts a fresh chat context.
 
 ---
 
