@@ -1,5 +1,19 @@
 # Deep Research Tool - Notes
 
+## 2026-09-24 - Help Center manual: standing requirement
+
+This tool's training manual belongs in the dashboard Help Center (`ai.txamfoundation.com/help`), tool id `deep-research-agent`. None is written yet; it will live at `foundation-ai-dashboard/content/wiki/deep-research-agent/`.
+
+The tool is hidden on the dashboard today; the manual should exist before it is unhidden.
+
+Standing rule from Andrew (2026-09-24), for every session on this project:
+
+- Any change to what a user sees or does (screens, buttons, tabs, workflows, settings, defaults, permissions) updates the manual in the same session: the affected pages, re-captured screenshots (`node scripts/wiki-capture.mjs deep-research-agent` in the dashboard repo), and `updated` in `manual.json`. Back-end-only changes need no manual edit.
+- The first session that does substantial work on this tool writes the manual and adds the Help button next to the Feedback button, unless Andrew says to skip it.
+- Screenshots blur or cover donor, prospect, and personal data; look at every image before publishing.
+
+Full rules: `2. Agents/Agent Instructions.md` ("Help Center manuals"). Authoring guide: `foundation-ai-dashboard/docs/Help-Center.md`.
+
 ## 2026-08-27/28 - #268: paste multiple images at once in the feedback widget
 
 Andrew: *"It also needs to be able to have multiple pictures added."* The feedback widget's paste

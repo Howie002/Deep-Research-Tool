@@ -7,6 +7,11 @@
 
 ---
 
+## Standing: Help Center manual
+
+- [ ] Write the manual (`content/wiki/deep-research-agent/`) and add the Help button, during the next session with substantial work here.
+- Reminder: when this tool's user-facing behavior changes, update its manual in the same session (pages, screenshots, `updated` date). See Notes, 2026-09-24.
+
 ## Alternative Harness Evaluation - Odysseus (added 2026-06-02)
 
 Evaluate **Odysseus**' Deep Research module (adapted from Alibaba's Tongyi DeepResearch, model: Tongyi-30B-A3B) as a candidate alternative / complement to the in-house tool — or as a source of ideas to fold in. Full context in Notes.md (2026-06-02). Research only so far; nothing installed.
